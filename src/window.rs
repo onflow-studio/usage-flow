@@ -105,3 +105,18 @@ pub fn save_pinned(pinned: bool) {
         let _ = std::fs::remove_file(path);
     }
 }
+
+/// Keep the original always-on-top default until the user turns it off.
+pub fn load_always_on_top() -> bool {
+    !settings_dir().join("always-on-top-disabled").exists()
+}
+
+pub fn save_always_on_top(enabled: bool) {
+    let path = settings_dir().join("always-on-top-disabled");
+    if enabled {
+        let _ = std::fs::remove_file(path);
+    } else {
+        let _ = std::fs::create_dir_all(settings_dir());
+        let _ = std::fs::write(path, "");
+    }
+}

@@ -41,6 +41,7 @@ struct App {
     visible: Arc<AtomicBool>,
     pinned: Arc<AtomicBool>,
     applied_pin: Option<bool>,
+    always_on_top: std::cell::Cell<bool>,
     placed: bool,
     display: Option<String>,
     move_to_next_screen: std::cell::Cell<bool>,
@@ -128,6 +129,7 @@ impl App {
             visible,
             pinned,
             applied_pin: None,
+            always_on_top: std::cell::Cell::new(window::load_always_on_top()),
             placed: false,
             display: None,
             move_to_next_screen: std::cell::Cell::new(false),
@@ -294,7 +296,7 @@ impl eframe::App for App {
         self.update_tray(&states);
 
         let frame = egui::Frame::central_panel(&ctx.style())
-            .fill(Color32::from_rgba_unmultiplied(10, 25, 47, 217))
+            .fill(Color32::from_rgba_unmultiplied(4, 12, 28, 230))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .stroke(Stroke::new(1.0_f32, Color32::from_gray(60)));
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -354,6 +356,18 @@ impl App {
             if icon_button(ui, Icon::Pin, pinned).on_hover_text(tip).clicked() {
                 self.pinned.store(!pinned, Ordering::SeqCst);
             }
+            let on_top = self.always_on_top.get();
+            let tip = if on_top {
+                "Always on top: on (click to allow other windows above)"
+            } else {
+                "Always on top: off (click to stay above other windows)"
+            };
+            if icon_button(ui, Icon::AlwaysOnTop, on_top).on_hover_text(tip).clicked() {
+                self.always_on_top.set(!on_top);
+                window::save_always_on_top(!on_top);
+                ui.ctx().send_viewport_cmd(ViewportCommand::WindowLevel(window_level(!on_top)));
+                ui.ctx().request_repaint();
+            }
             if ui
                 .add(egui::Button::new(RichText::new("↻").size(11.0)).frame(false))
                 .on_hover_text("Fetch now (auto every 10 min)")
@@ -369,22 +383,49 @@ enum Icon {
     Close,
     Pin,
     NextDisplay,
+    AlwaysOnTop,
 }
 
 /// Icons are painted because the bundled font lacks these glyphs.
 fn icon_button(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::click());
-    let color = if active {
-        Color32::from_rgb(90, 190, 120)
-    } else if response.hovered() {
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::selected(
+        egui::WidgetType::Button, ui.is_enabled(), active,
+        match icon {
+            Icon::Close => "Hide",
+            Icon::Pin => "Show on every desktop",
+            Icon::NextDisplay => "Move to next display",
+            Icon::AlwaysOnTop => "Always on top",
+        },
+    ));
+    let color = if response.is_pointer_button_down_on() {
+        Color32::WHITE
+    } else if response.hovered() || response.has_focus() {
         Color32::from_gray(230)
+    } else if active {
+        Color32::from_rgb(90, 190, 120)
     } else {
         Color32::from_gray(150)
     };
     let stroke = Stroke::new(1.4_f32, color);
     let painter = ui.painter();
     let c = rect.center();
+    if response.has_focus() {
+        painter.rect_stroke(rect.expand(2.0), 2.0, Stroke::new(2.0_f32, color), egui::StrokeKind::Outside);
+    }
     match icon {
+        Icon::AlwaysOnTop => {
+            let back = egui::Rect::from_center_size(c + Vec2::new(-2.0, 2.0), Vec2::splat(8.0));
+            let front = egui::Rect::from_center_size(c + Vec2::new(2.0, -2.0), Vec2::splat(8.0));
+            painter.line_segment([back.left_top(), back.left_bottom()], stroke);
+            painter.line_segment([back.left_bottom(), back.right_bottom()], stroke);
+            if active {
+                painter.rect_filled(front, 0.0, color);
+            } else {
+                painter.rect_stroke(front, 0.0, stroke, egui::StrokeKind::Middle);
+            }
+        }
         Icon::Close => {
             let d = 3.5;
             painter.line_segment([c + Vec2::new(-d, -d), c + Vec2::new(d, d)], stroke);
@@ -675,6 +716,10 @@ fn countdown(t: DateTime<Utc>) -> String {
     }
 }
 
+fn window_level(on_top: bool) -> egui::WindowLevel {
+    if on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal }
+}
+
 fn main() -> eframe::Result {
     use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
@@ -685,7 +730,7 @@ fn main() -> eframe::Result {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
-            .with_always_on_top(),
+            .with_window_level(window_level(window::load_always_on_top())),
         // Menu bar app: no Dock icon, no Cmd-Tab entry.
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_activation_policy(ActivationPolicy::Accessory);
