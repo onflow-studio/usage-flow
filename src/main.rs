@@ -254,6 +254,10 @@ fn poll(keychain_service: &str) -> Result<Vec<Limit>, String> {
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_secs(1));
 
@@ -290,6 +294,7 @@ impl eframe::App for App {
         self.update_tray(&states);
 
         let frame = egui::Frame::central_panel(&ctx.style())
+            .fill(Color32::from_rgba_unmultiplied(10, 25, 47, 217))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .stroke(Stroke::new(1.0_f32, Color32::from_gray(60)));
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -678,6 +683,7 @@ fn main() -> eframe::Result {
             .with_title("Claude Usage")
             .with_inner_size([WIDTH, 300.0])
             .with_decorations(false)
+            .with_transparent(true)
             .with_resizable(false)
             .with_always_on_top(),
         // Menu bar app: no Dock icon, no Cmd-Tab entry.
