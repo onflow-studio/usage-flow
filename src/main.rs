@@ -21,6 +21,9 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
 const WIDTH: f32 = 320.0;
+/// Height of an hourly chart when the window has no room to spare.
+const CHART_MIN_HEIGHT: f32 = 24.0;
+const MIN_ZOOM: f32 = 0.5;
 
 #[derive(Default)]
 struct AccountState {
@@ -45,6 +48,8 @@ struct App {
     placed: bool,
     display: Option<String>,
     move_to_next_screen: std::cell::Cell<bool>,
+    /// Height added to every hourly chart so the content fills the window.
+    chart_extra: std::cell::Cell<f32>,
     pin_item: CheckMenuItem,
 }
 
@@ -133,6 +138,7 @@ impl App {
             placed: false,
             display: None,
             move_to_next_screen: std::cell::Cell::new(false),
+            chart_extra: std::cell::Cell::new(0.0),
             pin_item,
         }
     }
@@ -270,6 +276,7 @@ impl eframe::App for App {
         if self.move_to_next_screen.take() {
             window::dock_next_screen(frame, WIDTH);
         }
+        window::keep_fitted(frame, WIDTH);
         // Remember the display, whether moved by the button or dragged there.
         let display = window::current_display(frame);
         if display.is_some() && display != self.display {
@@ -301,16 +308,20 @@ impl eframe::App for App {
             .stroke(Stroke::new(1.0_f32, Color32::from_gray(60)));
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
+            let (top, available) = (ui.cursor().top(), ui.available_height());
             self.title_bar(ui);
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if self.accounts.is_empty() {
-                    ui.label("No Claude Code accounts found in Keychain.");
+            if self.accounts.is_empty() {
+                ui.label("No Claude Code accounts found in Keychain.");
+            }
+            let chart_height = CHART_MIN_HEIGHT + self.chart_extra.get();
+            let mut charts = 0;
+            for (i, (account, state)) in self.accounts.iter().zip(states.iter()).enumerate() {
+                ui.add_space(16.0);
+                if draw_account(ui, account, state, ACCENTS[i % ACCENTS.len()], chart_height) {
+                    charts += 1;
                 }
-                for (i, (account, state)) in self.accounts.iter().zip(states.iter()).enumerate() {
-                    ui.add_space(16.0);
-                    draw_account(ui, account, state, ACCENTS[i % ACCENTS.len()]);
-                }
-            });
+            }
+            self.fit_content(ui.ctx(), available, ui.cursor().top() - top, charts);
         });
     }
 }
@@ -319,6 +330,28 @@ impl App {
     fn hide(&self, ctx: &egui::Context) {
         self.visible.store(false, Ordering::SeqCst);
         ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    }
+
+    /// Fits the content to the window instead of scrolling: spare height goes to the hourly
+    /// charts, and when it overflows even with the shortest charts, the whole UI zooms out.
+    fn fit_content(&self, ctx: &egui::Context, available: f32, used: f32, charts: usize) {
+        let extra = self.chart_extra.get();
+        let content = used - extra * charts as f32;
+        if available < 1.0 || content < 1.0 {
+            return;
+        }
+        let zoom = ctx.zoom_factor();
+        let fitted_zoom = (zoom * available / content).clamp(MIN_ZOOM, 1.0);
+        let spare = available * zoom / fitted_zoom - content;
+        let fitted_extra = if charts > 0 { (spare / charts as f32).max(0.0) } else { 0.0 };
+        if (fitted_zoom - zoom).abs() > 0.005 {
+            ctx.set_zoom_factor(fitted_zoom);
+            ctx.request_repaint();
+        }
+        if (fitted_extra - extra).abs() > 0.5 {
+            self.chart_extra.set(fitted_extra);
+            ctx.request_repaint();
+        }
     }
 
     /// Drag strip replacing the native title bar.
@@ -464,7 +497,15 @@ const ACCENTS: [Color32; 4] = [
     Color32::from_rgb(230, 160, 90),
 ];
 
-fn draw_account(ui: &mut egui::Ui, account: &Account, state: &AccountState, accent: Color32) {
+/// Returns whether the card includes an hourly chart.
+fn draw_account(
+    ui: &mut egui::Ui,
+    account: &Account,
+    state: &AccountState,
+    accent: Color32,
+    chart_height: f32,
+) -> bool {
+    let mut has_chart = false;
     let card = egui::Frame::new()
         .fill(CARD)
         .stroke(Stroke::new(1.0_f32, accent.gamma_multiply(0.35)))
@@ -515,7 +556,7 @@ fn draw_account(ui: &mut egui::Ui, account: &Account, state: &AccountState, acce
 
             if let Some(a) = &state.activity {
                 ui.add_space(4.0);
-                draw_hourly(ui, a, accent);
+                has_chart = draw_hourly(ui, a, accent, chart_height);
             }
 
             if let Some(t) = state.updated_at {
@@ -533,6 +574,7 @@ fn draw_account(ui: &mut egui::Ui, account: &Account, state: &AccountState, acce
         0.0,
         accent,
     );
+    has_chart
 }
 
 fn ago_text(secs: i64) -> String {
@@ -613,14 +655,14 @@ fn draw_limit(ui: &mut egui::Ui, limit: &Limit) {
     ui.add_space(6.0);
 }
 
-fn draw_hourly(ui: &mut egui::Ui, a: &Activity, accent: Color32) {
+/// Returns whether a chart was drawn, i.e. there was usage to plot.
+fn draw_hourly(ui: &mut egui::Ui, a: &Activity, accent: Color32, height: f32) -> bool {
     ui.label(RichText::new("TOKENS PER HOUR").size(9.5).color(MUTED));
     let max = a.hourly.iter().copied().max().unwrap_or(0);
     if max == 0 {
         ui.label(RichText::new(format!("no usage in the last {}h", a.hourly.len())).color(Color32::from_gray(100)).size(11.0));
-        return;
+        return false;
     }
-    let height = 56.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
     let painter = ui.painter();
     painter.line_segment(
@@ -648,6 +690,7 @@ fn draw_hourly(ui: &mut egui::Ui, a: &Activity, accent: Color32) {
             ui.label(RichText::new(format!("now · peak {}/h", tokens(max))).size(9.5).color(Color32::from_gray(100)));
         });
     });
+    true
 }
 
 struct Pace {

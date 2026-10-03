@@ -2,7 +2,7 @@
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
+use objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::path::PathBuf;
@@ -63,11 +63,41 @@ pub fn screen_count() -> usize {
 
 fn dock_on(window: &NSWindow, screen: &NSScreen, width: f32) {
     let area = screen.visibleFrame();
+    place(window, screen, area.origin.x, width);
+}
+
+/// Full height of `screen` between the menu bar and the Dock, at horizontal position `x`.
+fn place(window: &NSWindow, screen: &NSScreen, x: f64, width: f32) {
+    let area = screen.visibleFrame();
     let rect = NSRect::new(
-        NSPoint::new(area.origin.x, area.origin.y),
+        NSPoint::new(x, area.origin.y),
         NSSize::new(width as f64, area.size.height),
     );
     window.setFrame_display(rect, true);
+}
+
+thread_local! {
+    /// Window frame and display area as of the last fit, so an unchanged window is left alone.
+    static FITTED: std::cell::Cell<Option<(NSRect, NSRect)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Re-fits the window to the display it sits on whenever either changed, e.g. after being
+/// dragged to another display. Keeps the horizontal position it was dropped at.
+pub fn keep_fitted(frame: &eframe::Frame, width: f32) {
+    // Mid-drag the window still belongs to the mouse.
+    if NSEvent::pressedMouseButtons() != 0 {
+        return;
+    }
+    let Some(window) = ns_window(frame) else { return };
+    let Some(screen) = window.screen() else { return };
+    let area = screen.visibleFrame();
+    if FITTED.get() == Some((window.frame(), area)) {
+        return;
+    }
+    let max_x = (area.origin.x + area.size.width - width as f64).max(area.origin.x);
+    place(&window, &screen, window.frame().origin.x.clamp(area.origin.x, max_x), width);
+    // macOS may constrain the frame we asked for, so remember the one it settled on.
+    FITTED.set(Some((window.frame(), area)));
 }
 
 /// "Pinned" = shown on every desktop (Space) and over full-screen apps.
