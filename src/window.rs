@@ -5,7 +5,6 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::path::PathBuf;
 
 fn ns_window(frame: &eframe::Frame) -> Option<Retained<NSWindow>> {
     let handle = frame.window_handle().ok()?;
@@ -20,7 +19,7 @@ fn ns_window(frame: &eframe::Frame) -> Option<Retained<NSWindow>> {
 pub fn dock_left(frame: &eframe::Frame, width: f32) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let Some(window) = ns_window(frame) else { return };
-    let saved = std::fs::read_to_string(settings_dir().join("display")).ok();
+    let saved = crate::settings::display();
     let screens = NSScreen::screens(mtm);
     let remembered = saved.and_then(|name| {
         (0..screens.count())
@@ -33,12 +32,6 @@ pub fn dock_left(frame: &eframe::Frame, width: f32) {
 
 pub fn current_display(frame: &eframe::Frame) -> Option<String> {
     Some(ns_window(frame)?.screen()?.localizedName().to_string())
-}
-
-pub fn save_display(name: &str) {
-    let dir = settings_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join("display"), name);
 }
 
 /// Docks the window on the next display, wrapping around.
@@ -111,42 +104,4 @@ pub fn set_pinned(frame: &eframe::Frame, pinned: bool) {
         NSWindowCollectionBehavior::Default
     };
     window.setCollectionBehavior(behavior);
-}
-
-fn settings_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join("Library/Application Support/claude-usage")
-}
-
-fn settings_path() -> PathBuf {
-    settings_dir().join("pinned")
-}
-
-pub fn load_pinned() -> bool {
-    settings_path().exists()
-}
-
-pub fn save_pinned(pinned: bool) {
-    let path = settings_path();
-    if pinned {
-        let _ = std::fs::create_dir_all(path.parent().unwrap());
-        let _ = std::fs::write(path, "");
-    } else {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-/// Keep the original always-on-top default until the user turns it off.
-pub fn load_always_on_top() -> bool {
-    !settings_dir().join("always-on-top-disabled").exists()
-}
-
-pub fn save_always_on_top(enabled: bool) {
-    let path = settings_dir().join("always-on-top-disabled");
-    if enabled {
-        let _ = std::fs::remove_file(path);
-    } else {
-        let _ = std::fs::create_dir_all(settings_dir());
-        let _ = std::fs::write(path, "");
-    }
 }

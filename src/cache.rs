@@ -13,8 +13,7 @@ pub struct Reading {
 }
 
 fn path() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join("Library/Application Support/claude-usage/last-usage.json")
+    crate::settings::dir().join("last-usage.json")
 }
 
 /// Keyed by Keychain service name, which is stable per account.

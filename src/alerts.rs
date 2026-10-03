@@ -2,6 +2,11 @@ use crate::api::Limit;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Off silences notifications; crossings are still tracked, so turning it back on stays quiet
+/// about what already happened.
+pub static ENABLED: AtomicBool = AtomicBool::new(true);
 
 const THRESHOLDS: [f32; 3] = [80.0, 90.0, 100.0];
 
@@ -53,9 +58,12 @@ impl Alerts {
 }
 
 fn notify(title: &str, body: &str) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!(
-        "display notification \"{}\" with title \"Claude Usage\" subtitle \"{}\"",
+        "display notification \"{}\" with title \"Usage Flow\" subtitle \"{}\"",
         esc(body),
         esc(title)
     );

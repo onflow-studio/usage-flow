@@ -330,25 +330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-usage"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chrono",
- "eframe",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "raw-window-handle",
- "serde",
- "serde_json",
- "sha2",
- "tray-icon",
- "ureq",
- "winit",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3001,6 +2982,25 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+]
+
+[[package]]
+name = "usage-flow"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "eframe",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tray-icon",
+ "ureq",
+ "winit",
 ]
 
 [[package]]
