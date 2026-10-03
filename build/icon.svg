@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="edge" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#00e1ff"/>
+      <stop offset="1" stop-color="#8c9eff"/>
+    </linearGradient>
+    <linearGradient id="light" gradientUnits="userSpaceOnUse" x1="272" y1="0" x2="752" y2="0">
+      <stop offset="0" stop-color="#00e1ff"/>
+      <stop offset="1" stop-color="#8c9eff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.56" r="0.5">
+      <stop offset="0" stop-color="#0a4654"/>
+      <stop offset="0.55" stop-color="#03181e"/>
+      <stop offset="1" stop-color="#030507"/>
+    </radialGradient>
+    <filter id="bloom" x="-20%" y="-60%" width="140%" height="220%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+  <rect x="105" y="105" width="814" height="814" rx="182" fill="url(#glow)" stroke="url(#edge)" stroke-width="10"/>
+  <g fill="#3f6674" opacity="0.45">
+    <rect x="272" y="336" width="480" height="64" rx="8"/>
+    <rect x="272" y="480" width="480" height="64" rx="8"/>
+    <rect x="272" y="624" width="480" height="64" rx="8"/>
+  </g>
+  <g fill="url(#light)" opacity="0.55" filter="url(#bloom)">
+    <rect x="272" y="336" width="408" height="64" rx="8"/>
+    <rect x="272" y="480" width="264" height="64" rx="8"/>
+    <rect x="272" y="624" width="144" height="64" rx="8"/>
+  </g>
+  <g fill="url(#light)">
+    <rect x="272" y="336" width="408" height="64" rx="8"/>
+    <rect x="272" y="480" width="264" height="64" rx="8"/>
+    <rect x="272" y="624" width="144" height="64" rx="8"/>
+  </g>
+</svg>
