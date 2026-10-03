@@ -64,6 +64,18 @@ Limits only show up when you hit them. The session window runs out in the middle
 | **Keep Windows Clear of the Panel** | Move other windows out from under the panel. The first time, it opens System Settings to allow Usage Flow under Accessibility |
 | **Open at Login** / **Quit Usage Flow** | The usual |
 
+## Stack
+
+```text
+>_ usage-flow --stack
+lang       Rust 99%
+stack      egui · native macOS menu bar and Accessibility
+talks to   Anthropic's usage endpoint, with the login Claude Code already keeps
+reads      Claude Code and Codex transcripts on your Mac
+stores     settings and the last reading, in Application Support
+runs on    macOS, Apple Silicon · no server, no account, no telemetry
+```
+
 ## How it works
 
 Usage Flow is a small native app written in Rust with [egui](https://github.com/emilk/egui). It has no server and no account of its own.
