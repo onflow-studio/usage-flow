@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub const PINNED: &str = "pinned";
 pub const ALWAYS_ON_TOP_OFF: &str = "always-on-top-disabled";
 pub const LOGIN_OFF: &str = "login-disabled";
-pub const MENU_BAR_USAGE_OFF: &str = "menu-bar-usage-hidden";
+pub const MENU_BAR_USAGE: &str = "menu-bar-usage";
 pub const ALERTS_OFF: &str = "alerts-disabled";
 
 fn app_support() -> PathBuf {

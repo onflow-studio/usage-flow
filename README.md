@@ -29,7 +29,7 @@ Limits only show up when you hit them. The session window runs out in the middle
 - **What you are burning.** Tokens in the last hour and today, sessions running right now, and a 12-hour chart per account, read from local transcripts.
 - **A heads-up before the wall.** A notification at 80, 90 and 100% of a limit, and when a session or week resets.
 - **Fits where you put it.** The panel docks to the edge of a display, full height, and sizes its content to the room it has. Drag it to another display and it settles there.
-- **Settings in the menu.** Right-click the gauge for menu bar figures, alerts, always on top, all desktops and open at login.
+- **Settings in the menu.** Click the gauge for the panel, menu bar figures, alerts, always on top, all desktops and open at login.
 - **Quiet by design.** No account, no telemetry, no Dock icon. It only talks to the services you already use.
 
 ## Install
@@ -42,18 +42,18 @@ Limits only show up when you hit them. The session window runs out in the middle
    xattr -dr com.apple.quarantine "/Applications/Usage Flow.app"
    ```
 
-4. Open it. The gauge appears in your menu bar and the panel on the left edge of your screen. It opens at login from then on; right-click the gauge to turn that off.
+4. Open it. The gauge appears in your menu bar and the panel on the left edge of your screen. It opens at login from then on; click the gauge to turn that off.
 
 ## Use
 
 | Do this | To |
 | --- | --- |
-| Click the gauge | Show or hide the panel |
-| Right-click the gauge | Open the settings menu |
+| Click the gauge | Open the menu |
+| **Show Panel** / **Hide Panel** | Show or hide the panel |
 | Drag the panel's top row | Move it, also to another display |
 | ↻ in the panel, or **Refresh Now** | Fetch limits now instead of waiting 10 minutes |
-| ✕ in the panel | Hide it. The gauge stays |
-| **Usage in Menu Bar** | Show or hide the figures beside the gauge (`session·week` per account) |
+| ✕ in the panel | Hide it. **Show Panel** brings it back |
+| **Usage in Menu Bar** | Show the figures beside the gauge (`session·week` per account). Off to start with |
 | **Alerts at 80, 90 and 100%** | Turn notifications on or off |
 | **Always on Top** / **Show on All Desktops** | Keep the panel above other windows, and on every Space |
 | **Move to Next Display** | Dock the panel on the next display |

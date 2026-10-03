@@ -370,7 +370,7 @@ impl App {
         row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if icon_button(ui, Icon::Hide)
-                .on_hover_text("hide. click the menu bar gauge to show it again")
+                .on_hover_text("hide. show panel in the menu bar gauge brings it back")
                 .clicked()
             {
                 self.hide(ui.ctx());

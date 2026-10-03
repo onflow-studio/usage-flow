@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 /// What the menu and the panel both read and change.
 pub struct Shared {
@@ -23,7 +23,7 @@ impl Shared {
             visible: AtomicBool::new(true),
             pinned: AtomicBool::new(settings::flag(settings::PINNED)),
             always_on_top: AtomicBool::new(!settings::flag(settings::ALWAYS_ON_TOP_OFF)),
-            menu_bar_usage: AtomicBool::new(!settings::flag(settings::MENU_BAR_USAGE_OFF)),
+            menu_bar_usage: AtomicBool::new(settings::flag(settings::MENU_BAR_USAGE)),
             move_to_next_display: AtomicBool::new(false),
         }
     }
@@ -79,9 +79,8 @@ impl Tray {
         let icon = TrayIconBuilder::new()
             .with_icon(gauge(&[]))
             .with_icon_as_template(false)
-            .with_tooltip("Usage Flow: click to show or hide, right-click for settings")
+            .with_tooltip("Usage Flow")
             .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false)
             .build()
             .ok()?;
 
@@ -96,7 +95,7 @@ impl Tray {
             open_at_login.id().clone(),
             quit.id().clone(),
         );
-        let (menu_shared, menu_ctx) = (shared.clone(), ctx.clone());
+        let (menu_shared, menu_ctx) = (shared, ctx.clone());
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let (panel, refresh, menu_bar_usage, alerts, always_on_top, pinned, next_display, open_at_login, quit) = &ids;
             let shared = &menu_shared;
@@ -109,7 +108,7 @@ impl Tray {
                 let _ = refresh_tx.send(());
             } else if id == menu_bar_usage {
                 let on = !shared.menu_bar_usage.fetch_xor(true, Ordering::SeqCst);
-                settings::set_flag(settings::MENU_BAR_USAGE_OFF, !on);
+                settings::set_flag(settings::MENU_BAR_USAGE, on);
             } else if id == alerts {
                 let on = !alerts::ENABLED.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::ALERTS_OFF, !on);
@@ -125,18 +124,6 @@ impl Tray {
                 login::set_enabled(!login::enabled());
             }
             menu_ctx.request_repaint();
-        }));
-
-        let click_ctx = ctx.clone();
-        TrayIconEvent::set_event_handler(Some(move |event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                shared.toggle_panel(&click_ctx);
-            }
         }));
 
         Some(Self { icon, headline, panel, next_display, shown: RefCell::new(None) })
