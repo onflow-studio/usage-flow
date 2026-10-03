@@ -97,19 +97,22 @@ pub fn light_up(painter: &egui::Painter, rect: Rect, foot: Color32, top: Color32
     quad(painter, rect, [top, top, foot, foot]);
 }
 
-/// The panel's 1px frame: accent at both sides, info in the middle.
-pub fn frame(painter: &egui::Painter, rect: Rect) {
-    let mid = rect.center().x;
-    for y in [rect.top(), rect.bottom() - 1.0] {
-        let left = Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(mid, y + 1.0));
-        let right = Rect::from_min_max(Pos2::new(mid, y), Pos2::new(rect.right(), y + 1.0));
-        light_across(painter, left, ACCENT, INFO);
-        light_across(painter, right, INFO, ACCENT);
-    }
-    for x in [rect.left(), rect.right() - 1.0] {
-        let side = Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 1.0, rect.bottom()));
-        painter.rect_filled(side, 0.0, ACCENT);
-    }
+/// The panel's one edge, 1px on the side that faces the screen: accent at both ends, info in
+/// the middle. The other three sides meet the display's own edges.
+pub fn edge(painter: &egui::Painter, rect: Rect, at_right: bool) {
+    let x = if at_right { rect.right() - 1.0 } else { rect.left() };
+    let mid = rect.center().y;
+    let upper = Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 1.0, mid));
+    let lower = Rect::from_min_max(Pos2::new(x, mid), Pos2::new(x + 1.0, rect.bottom()));
+    light_up(painter, upper, INFO, ACCENT);
+    light_up(painter, lower, ACCENT, INFO);
+}
+
+/// The wash behind an account's name: the light at a fraction of its strength, under a full line.
+pub fn band(painter: &egui::Painter, rect: Rect) {
+    light_across(painter, rect, ACCENT.gamma_multiply(0.24), INFO.gamma_multiply(0.14));
+    let line = Rect::from_min_max(rect.left_top(), Pos2::new(rect.right(), rect.top() + 1.0));
+    light_across(painter, line, ACCENT, INFO);
 }
 
 /// A hairline tied to the accent, as between the radio's rows.

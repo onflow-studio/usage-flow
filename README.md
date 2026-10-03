@@ -29,6 +29,7 @@ Limits only show up when you hit them. The session window runs out in the middle
 - **What you are burning.** Tokens in the last hour and today, sessions running right now, and a 12-hour chart per account, read from local transcripts.
 - **A heads-up before the wall.** A notification at 80, 90 and 100% of a limit, and when a session or week resets.
 - **Sticks to a side.** The panel docks to the left or right edge of a display, full height, and sizes its content to the room it has. Drag it anywhere and it snaps to the nearer side.
+- **Room of its own.** Tick **Keep Windows Clear of the Panel** and other apps' windows are moved out from under it, as if the panel were part of the screen's edge.
 - **Settings in the menu.** Click the gauge for the panel, accounts, menu bar figures, alerts, always on top, all desktops, side and open at login.
 - **Quiet by design.** No account, no telemetry, no Dock icon. It only talks to the services you already use.
 
@@ -60,6 +61,7 @@ Limits only show up when you hit them. The session window runs out in the middle
 | **Accounts**, then **Add Claude Code Account…** | Name a new login and sign it in from Terminal. It joins the panel once signed in |
 | **Move to Right Side** / **Move to Left Side** | Dock the panel against the other edge |
 | **Move to Next Display** | Dock the panel on the next display |
+| **Keep Windows Clear of the Panel** | Move other windows out from under the panel. The first time, it opens System Settings to allow Usage Flow under Accessibility |
 | **Open at Login** / **Quit Usage Flow** | The usual |
 
 ## How it works
@@ -67,6 +69,8 @@ Limits only show up when you hit them. The session window runs out in the middle
 Usage Flow is a small native app written in Rust with [egui](https://github.com/emilk/egui). It has no server and no account of its own.
 
 Claude Code limits come from Anthropic's usage endpoint, asked every 10 minutes with the login Claude Code already keeps in your Keychain. The token is read fresh each time and never stored or sent anywhere else. Codex limits come from the snapshots Codex writes into its own session logs, so they are as fresh as its last reply. Token counts, sessions and the hourly chart are read from the transcripts both tools keep on your Mac, every 10 seconds.
+
+macOS has no way for an app to reserve a strip of the screen, so **Keep Windows Clear of the Panel** does it by hand: with the Accessibility permission, it moves and narrows the windows that overlap the panel. It is off until you tick it, and it leaves full-screen and minimized windows alone. The app isn't signed with a developer ID, so macOS asks for the permission again after each update.
 
 Settings and the last reading are saved to `~/Library/Application Support/Usage Flow/`. That folder is the only thing it stores, and it never leaves your Mac.
 

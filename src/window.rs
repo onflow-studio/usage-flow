@@ -37,6 +37,16 @@ pub fn dock(frame: &eframe::Frame, width: f32, side: Side) {
     dock_on(&window, &screen, width, side);
 }
 
+/// The window's place on screen in top-left coordinates, as the window server counts them:
+/// `(x, y, width, height)`.
+pub fn screen_rect(frame: &eframe::Frame) -> Option<(f64, f64, f64, f64)> {
+    let window = ns_window(frame)?;
+    // AppKit counts up from the bottom of the primary display, which is the first one.
+    let primary = NSScreen::screens(MainThreadMarker::new()?).firstObject()?.frame();
+    let rect = window.frame();
+    Some((rect.origin.x, primary.size.height - rect.origin.y - rect.size.height, rect.size.width, rect.size.height))
+}
+
 pub fn current_display(frame: &eframe::Frame) -> Option<String> {
     Some(ns_window(frame)?.screen()?.localizedName().to_string())
 }

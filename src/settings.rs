@@ -9,6 +9,7 @@ pub const LOGIN_OFF: &str = "login-disabled";
 pub const MENU_BAR_USAGE: &str = "menu-bar-usage";
 pub const ALERTS_OFF: &str = "alerts-disabled";
 pub const SIDE_RIGHT: &str = "side-right";
+pub const KEEP_CLEAR: &str = "keep-windows-clear";
 
 fn app_support() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("Library/Application Support")

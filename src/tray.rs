@@ -2,7 +2,7 @@
 
 use crate::accounts::Account;
 use crate::window::Side;
-use crate::{alerts, login, settings, theme, window};
+use crate::{alerts, clear, login, settings, theme, window};
 use eframe::egui::{self, Color32, ViewportCommand};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -32,6 +32,8 @@ pub struct Shared {
     pub right_side: AtomicBool,
     /// The side changed from the menu and the panel has yet to move there.
     pub dock_requested: AtomicBool,
+    /// Asked to keep other windows out from under the panel. It takes effect once macOS allows it.
+    pub keep_clear: AtomicBool,
 }
 
 impl Shared {
@@ -44,6 +46,7 @@ impl Shared {
             move_to_next_display: AtomicBool::new(false),
             right_side: AtomicBool::new(settings::flag(settings::SIDE_RIGHT)),
             dock_requested: AtomicBool::new(false),
+            keep_clear: AtomicBool::new(settings::flag(settings::KEEP_CLEAR)),
         }
     }
 
@@ -72,6 +75,7 @@ pub struct Tray {
     panel: MenuItem,
     next_display: MenuItem,
     side: MenuItem,
+    keep_clear: CheckMenuItem,
     accounts: Submenu,
     /// The submenu's account rows, and which account each one's id stands for.
     account_items: RefCell<Vec<CheckMenuItem>>,
@@ -90,6 +94,7 @@ impl Tray {
         let alerts = CheckMenuItem::new("Alerts at 80, 90 and 100%", true, !settings::flag(settings::ALERTS_OFF), None);
         let always_on_top = CheckMenuItem::new("Always on Top", true, checked(&shared.always_on_top), None);
         let pinned = CheckMenuItem::new("Show on All Desktops", true, checked(&shared.pinned), None);
+        let keep_clear = CheckMenuItem::new(KEEP_CLEAR, true, false, None);
         let side = MenuItem::new("Move to Right Side", true, None);
         let next_display = MenuItem::new("Move to Next Display", window::screen_count() > 1, None);
         let add_account = MenuItem::new("Add Claude Code Account…", true, None);
@@ -110,6 +115,7 @@ impl Tray {
             &alerts,
             &always_on_top,
             &pinned,
+            &keep_clear,
             &side,
             &next_display,
             &PredefinedMenuItem::separator(),
@@ -133,6 +139,7 @@ impl Tray {
             pinned.id().clone(),
             next_display.id().clone(),
             side.id().clone(),
+            keep_clear.id().clone(),
             add_account.id().clone(),
             open_at_login.id().clone(),
             quit.id().clone(),
@@ -141,8 +148,20 @@ impl Tray {
         let account_ids: Arc<Mutex<Vec<(MenuId, String)>>> = Arc::default();
         let menu_account_ids = account_ids.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let (panel, refresh, menu_bar_usage, alerts, always_on_top, pinned, next_display, side, add_account, open_at_login, quit) =
-                &ids;
+            let (
+                panel,
+                refresh,
+                menu_bar_usage,
+                alerts,
+                always_on_top,
+                pinned,
+                next_display,
+                side,
+                keep_clear,
+                add_account,
+                open_at_login,
+                quit,
+            ) = &ids;
             let shared = &menu_shared;
             let id = &event.id;
             if id == quit {
@@ -168,6 +187,14 @@ impl Tray {
             } else if id == side {
                 shared.set_side(if shared.side() == Side::Left { Side::Right } else { Side::Left });
                 shared.dock_requested.store(true, Ordering::SeqCst);
+            } else if id == keep_clear {
+                // Asked for but not yet allowed, another click is a request for the way there, not a change of mind.
+                let waiting = shared.keep_clear.load(Ordering::SeqCst) && !clear::trusted();
+                let on = waiting || !shared.keep_clear.fetch_xor(true, Ordering::SeqCst);
+                settings::set_flag(settings::KEEP_CLEAR, on);
+                if on && !clear::trusted() {
+                    clear::request();
+                }
             } else if id == add_account {
                 let _ = commands.send(Command::AddAccount);
             } else if id == open_at_login {
@@ -184,6 +211,7 @@ impl Tray {
             panel,
             next_display,
             side,
+            keep_clear,
             accounts,
             account_items: RefCell::default(),
             account_ids,
@@ -213,6 +241,10 @@ impl Tray {
         let visible = shared.visible.load(Ordering::SeqCst);
         self.panel.set_text(if visible { "Hide Panel" } else { "Show Panel" });
         self.next_display.set_enabled(window::screen_count() > 1);
+        let keep_clear = shared.keep_clear.load(Ordering::SeqCst);
+        let allowed = clear::trusted();
+        self.keep_clear.set_checked(keep_clear && allowed);
+        self.keep_clear.set_text(if keep_clear && !allowed { KEEP_CLEAR_WAITING } else { KEEP_CLEAR });
         self.side.set_text(match shared.side() {
             Side::Left => "Move to Right Side",
             Side::Right => "Move to Left Side",
@@ -230,6 +262,9 @@ impl Tray {
         *self.shown.borrow_mut() = next;
     }
 }
+
+const KEEP_CLEAR: &str = "Keep Windows Clear of the Panel";
+const KEEP_CLEAR_WAITING: &str = "Keep Windows Clear: Allow in Accessibility…";
 
 const ICON_PX: usize = 36;
 const TRACK_PX: usize = 28;

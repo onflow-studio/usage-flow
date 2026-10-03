@@ -7,7 +7,7 @@ Tokens come from email-flow's DESIGN.md, only the ones this panel uses. They liv
 ## Color
 
 - `--status` #000000: the panel
-- `--surface-raised` #11202A: bar tracks, the plan badge
+- `--surface-raised` #11202A: bar tracks
 - `--surface-top` #172A36: tooltips
 - `--border` #132631: the chart's baseline, the tooltip edge
 - `--text` #E6FBFF: figures, the account name, the pace tick
@@ -29,15 +29,16 @@ Account identity is a hue, shown as an 8px square before the name and never as t
 ## Spacing
 
 - Base unit 4px; scale 4 / 8 / 12.
-- Panel padding 12. 4 within a group, 8 between groups, 12 above and below each account.
+- Panel padding 12. 4 within a group, 8 between groups, 16 between accounts.
 - Width 320. Height is the display's, between the menu bar and the Dock.
 
 ## Shape and light
 
 - Square corners on the panel, bars and squares. 2px on the plan badge, 4px on tooltips. Dots are circles.
-- Separation is hairlines, no shadows. Between the top row and the accounts, and between accounts, a 1px rule in `--accent` at 30%, edge to edge.
-- The frame: a 1px border in the light, `--accent` at both sides and `--info` in the middle.
-- The light is used for: the frame, the top row's gauge and status, limit bars under 70%, chart bars and the menu bar gauge. Nothing else.
+- Separation is hairlines, no shadows. Under the top row, a 1px rule in `--accent` at 30%, edge to edge.
+- The edge: one 1px line in the light on the side that faces the screen, the right when docked left and the left when docked right, `--accent` at both ends and `--info` in the middle. The other three sides meet the display's own edges and carry no line.
+- Account band: each account opens with a 28px band, edge to edge: the light as a wash, `--accent` at 24% to `--info` at 14%, under a 1px line of the light at full. 16px of black separates one account from the next band. The wash stays low so the name on it keeps its contrast.
+- The light is used for: the edge, the account bands, the top row's gauge and status, limit bars under 70%, chart bars and the menu bar gauge. Nothing else.
 - A limit bar's light spans the whole track, so a shorter fill shows only its near end. From 70% the fill is flat `--warning`, from 90% flat `--danger`.
 - Chart bars are lit bottom to top. Past hours sit at 55%; the hour in progress is at full.
 
@@ -48,7 +49,7 @@ No scrolling. The hourly charts stretch to fill spare height (24px minimum). If 
 ## Components
 
 - Top row: 32px, also the drag strip. The gauge mark (three bars in the light), `usage` in `--text-dim`, then what the accounts are doing in the light: `5 active` or `idle`. At the right, refresh and hide, 14px, `--text-dim` at rest, `--text` on hover, `--accent` pressed.
-- Account: a two-digit number in `--text-dim`, the account square, the name at 12px 600, truncated. The plan badge at the right, `--surface-raised`, 11px `--text-muted`, at most 96px wide.
+- Account: on its band, a two-digit number in `--text-muted`, the account square, the name at 12px 600, truncated. The plan badge at the right, `--status` at 50%, 11px `--text-muted`, at most 96px wide.
 - Activity: a 6px `--accent` dot and `3 active sessions`, or a `--text-dim` ring and `idle`. Then three figures in columns: `last hour`, `today`, `sessions`.
 - Limit: name and percentage on one line, a 6px bar on a `--surface-raised` track with a 2px `--text` tick where the window's elapsed time is, then `resets in 2h 6m` and the pace.
 - Hourly chart: `tokens per hour`, twelve bars on a `--border` baseline, then the first hour at left and `now · peak 61.3M/h` at right.

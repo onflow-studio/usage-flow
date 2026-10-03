@@ -3,6 +3,7 @@ mod activity;
 mod alerts;
 mod api;
 mod cache;
+mod clear;
 mod codex;
 mod login;
 mod settings;
@@ -19,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tray::{Command, Shared, Tray};
+use window::Side;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
@@ -29,6 +31,9 @@ const WIDTH: f32 = 320.0;
 const PADDING: f32 = 12.0;
 /// Height of an hourly chart when the window has no room to spare.
 const CHART_MIN_HEIGHT: f32 = 24.0;
+/// Black left between one account and the next one's band.
+const ACCOUNT_GAP: f32 = 16.0;
+const BAND_HEIGHT: f32 = 28.0;
 const MIN_ZOOM: f32 = 0.5;
 /// Widest a plan badge gets before its text is cut.
 const PLAN_MAX_WIDTH: f32 = 96.0;
@@ -70,6 +75,7 @@ impl App {
         theme::install(&ctx);
         alerts::ENABLED.store(!settings::flag(settings::ALERTS_OFF), Ordering::SeqCst);
         login::sync();
+        clear::spawn();
 
         let (command_tx, commands) = mpsc::channel();
         let shared = Arc::new(Shared::load());
@@ -344,6 +350,9 @@ impl eframe::App for App {
             self.applied_always_on_top = Some(always_on_top);
         }
 
+        let keep_clear = self.shared.keep_clear.load(Ordering::SeqCst) && self.shared.visible.load(Ordering::SeqCst);
+        clear::set_panel(keep_clear.then(|| window::screen_rect(frame)).flatten().map(|rect| (rect, self.shared.side())));
+
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.hide(ctx);
@@ -352,10 +361,9 @@ impl eframe::App for App {
         let states = self.states.lock().unwrap();
         self.update_tray(&states);
 
-        // The frame is painted over the panel's outermost pixel, so the content starts inside it.
         let panel = egui::Frame::new()
             .fill(theme::STATUS)
-            .inner_margin(egui::Margin::symmetric(PADDING as i8, 1));
+            .inner_margin(egui::Margin::symmetric(PADDING as i8, 0));
         egui::CentralPanel::default().frame(panel).show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             let (top, available) = (ui.cursor().top(), ui.available_height() - PADDING);
@@ -373,17 +381,15 @@ impl eframe::App for App {
             let mut charts = 0;
             for (i, (account, state)) in self.accounts.iter().zip(states.iter()).enumerate() {
                 if i > 0 {
-                    rule(ui);
+                    ui.add_space(ACCOUNT_GAP);
                 }
-                ui.add_space(PADDING);
                 if draw_account(ui, i, account, state, chart_height) {
                     charts += 1;
                 }
-                ui.add_space(PADDING - ui.spacing().item_spacing.y);
             }
             self.fit_content(ui.ctx(), available, ui.cursor().top() - top, charts);
             let screen = ui.ctx().content_rect();
-            theme::frame(&ui.painter().with_clip_rect(screen), screen);
+            theme::edge(&ui.painter().with_clip_rect(screen), screen, self.shared.side() == Side::Left);
         });
     }
 }
@@ -542,15 +548,26 @@ fn draw_account(
         .label
         .split_once(" · ")
         .unwrap_or((account.label.as_str(), ""));
-    ui.horizontal(|ui| {
+    // The band runs edge to edge under the account's name, so each account starts on its own light.
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_HEIGHT), Sense::hover());
+    let screen = ui.ctx().content_rect();
+    theme::band(
+        &ui.painter().with_clip_rect(screen),
+        Rect::from_x_y_ranges(screen.x_range(), row.y_range()),
+    );
+    let mut band = ui.new_child(
+        egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    {
+        let ui = &mut band;
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.label(small(format!("{:02}", index + 1), theme::TEXT_DIM));
+        ui.label(small(format!("{:02}", index + 1), theme::TEXT_MUTED));
         let (square, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
         ui.painter().rect_filled(square, 0.0, theme::ACCOUNT_HUES[index % theme::ACCOUNT_HUES.len()]);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if !plan.is_empty() {
                 egui::Frame::new()
-                    .fill(theme::SURFACE_RAISED)
+                    .fill(theme::STATUS.gamma_multiply(0.5))
                     .corner_radius(2)
                     .inner_margin(egui::Margin::symmetric(4, 1))
                     .show(ui, |ui| {
@@ -568,7 +585,8 @@ fn draw_account(
                     .on_hover_text(name);
             });
         });
-    });
+    }
+    ui.add_space(4.0);
 
     if let Some(a) = &state.activity {
         draw_activity(ui, a);
@@ -614,8 +632,6 @@ fn ago_text(secs: i64) -> String {
 fn draw_activity(ui: &mut egui::Ui, a: &Activity) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        // Lines up under the account square.
-        ui.add_space(22.0);
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
         let label = if a.active_sessions > 0 {
             ui.painter().circle_filled(rect.center(), 3.0, theme::ACCENT);
