@@ -15,13 +15,15 @@ use activity::Activity;
 use api::Limit;
 use chrono::{DateTime, Local, Utc};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, ViewportCommand};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
-use tray::{Shared, Tray};
+use tray::{Command, Shared, Tray};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
+/// How often the Mac is checked for accounts signing in or out.
+const DISCOVER_INTERVAL: Duration = Duration::from_secs(30);
 const WIDTH: f32 = 320.0;
 /// Space between the panel's edge and its content.
 const PADDING: f32 = 12.0;
@@ -43,9 +45,15 @@ struct AccountState {
 type States = Arc<Mutex<Vec<AccountState>>>;
 
 struct App {
+    /// Every account found on this Mac, the ones taken off the panel included.
+    discovered: Vec<Account>,
+    /// The accounts on the panel.
     accounts: Vec<Account>,
     states: States,
     refresh_tx: mpsc::Sender<()>,
+    /// Set when the account list is replaced, so the scanner of the old one stops.
+    retired: Arc<AtomicBool>,
+    commands: mpsc::Receiver<Command>,
     tray: Option<Tray>,
     shared: Arc<Shared>,
     applied_pin: Option<bool>,
@@ -60,7 +68,38 @@ impl App {
     fn new(cc: &eframe::CreationContext) -> Self {
         let ctx = cc.egui_ctx.clone();
         theme::install(&ctx);
-        let accounts = accounts::discover();
+        alerts::ENABLED.store(!settings::flag(settings::ALERTS_OFF), Ordering::SeqCst);
+        login::sync();
+
+        let (command_tx, commands) = mpsc::channel();
+        let shared = Arc::new(Shared::load());
+        let tray = Tray::new(&ctx, shared.clone(), command_tx.clone());
+        let discovered = accounts::discover();
+        spawn_watcher(&discovered, command_tx, ctx.clone());
+
+        let mut app = Self {
+            discovered: Vec::new(),
+            accounts: Vec::new(),
+            states: States::default(),
+            refresh_tx: mpsc::channel().0,
+            retired: Arc::default(),
+            commands,
+            tray,
+            shared,
+            applied_pin: None,
+            applied_always_on_top: None,
+            placed: false,
+            display: None,
+            chart_extra: std::cell::Cell::new(0.0),
+        };
+        app.show_accounts(&ctx, discovered);
+        app
+    }
+
+    /// Puts `discovered` on the panel, less the hidden ones, and starts watching their usage.
+    fn show_accounts(&mut self, ctx: &egui::Context, discovered: Vec<Account>) {
+        let hidden = settings::hidden_accounts();
+        let accounts: Vec<Account> = discovered.iter().filter(|a| !hidden.contains(a.key())).cloned().collect();
         let cached = cache::load();
         let states: States = Arc::new(Mutex::new(
             accounts
@@ -75,26 +114,35 @@ impl App {
                 })
                 .collect(),
         ));
+        // The old poller ends when its refresh channel is dropped below, the old scanner on this flag.
+        self.retired.store(true, Ordering::SeqCst);
+        self.retired = Arc::default();
         let (refresh_tx, refresh_rx) = mpsc::channel();
-        alerts::ENABLED.store(!settings::flag(settings::ALERTS_OFF), Ordering::SeqCst);
         spawn_poller(accounts.clone(), states.clone(), ctx.clone(), refresh_rx);
-        spawn_scanner(accounts.clone(), states.clone(), ctx.clone());
-        login::sync();
+        spawn_scanner(accounts.clone(), states.clone(), ctx.clone(), self.retired.clone());
+        if let Some(tray) = &self.tray {
+            tray.set_accounts(&discovered, &hidden);
+        }
+        self.discovered = discovered;
+        self.accounts = accounts;
+        self.states = states;
+        self.refresh_tx = refresh_tx;
+    }
 
-        let shared = Arc::new(Shared::load());
-        let tray = Tray::new(&ctx, shared.clone(), refresh_tx.clone());
-
-        Self {
-            accounts,
-            states,
-            refresh_tx,
-            tray,
-            shared,
-            applied_pin: None,
-            applied_always_on_top: None,
-            placed: false,
-            display: None,
-            chart_extra: std::cell::Cell::new(0.0),
+    fn handle_commands(&mut self, ctx: &egui::Context) {
+        while let Ok(command) = self.commands.try_recv() {
+            match command {
+                Command::Refresh => {
+                    let _ = self.refresh_tx.send(());
+                }
+                Command::ToggleAccount(key) => {
+                    let hidden = settings::hidden_accounts().contains(&key);
+                    settings::set_account_hidden(&key, !hidden);
+                    self.show_accounts(ctx, self.discovered.clone());
+                }
+                Command::AddAccount => accounts::add_claude(),
+                Command::Discovered(found) => self.show_accounts(ctx, found),
+            }
         }
     }
 
@@ -135,6 +183,28 @@ fn active_sessions(states: &[AccountState]) -> usize {
 
 fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
+/// Looks for accounts signing in or out, and for a label changing, e.g. a new plan.
+fn spawn_watcher(known: &[Account], commands: mpsc::Sender<Command>, ctx: egui::Context) {
+    let snapshot = |accounts: &[Account]| -> Vec<(String, String)> {
+        accounts.iter().map(|a| (a.key().to_string(), a.label.clone())).collect()
+    };
+    let mut known = snapshot(known);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(DISCOVER_INTERVAL);
+            let found = accounts::discover();
+            if snapshot(&found) == known {
+                continue;
+            }
+            known = snapshot(&found);
+            if commands.send(Command::Discovered(found)).is_err() {
+                return;
+            }
+            ctx.request_repaint();
+        }
+    });
 }
 
 fn spawn_poller(accounts: Vec<Account>, states: States, ctx: egui::Context, refresh_rx: mpsc::Receiver<()>) {
@@ -178,7 +248,7 @@ enum Scanner {
     Codex(codex::Scanner),
 }
 
-fn spawn_scanner(accounts: Vec<Account>, states: States, ctx: egui::Context) {
+fn spawn_scanner(accounts: Vec<Account>, states: States, ctx: egui::Context, retired: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let mut scanners: Vec<_> = accounts
             .iter()
@@ -189,7 +259,7 @@ fn spawn_scanner(accounts: Vec<Account>, states: States, ctx: egui::Context) {
             .collect();
         // Codex limits come from local logs, so its alerts are raised here, not in the poller.
         let mut alerts = alerts::Alerts::default();
-        loop {
+        while !retired.load(Ordering::SeqCst) {
             for (i, scanner) in scanners.iter_mut().enumerate() {
                 match scanner {
                     Scanner::Claude(s) => {
@@ -241,15 +311,19 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_secs(1));
+        self.handle_commands(ctx);
 
-        if !self.placed {
-            window::dock_left(frame, WIDTH);
+        if !self.placed || self.shared.dock_requested.swap(false, Ordering::SeqCst) {
+            window::dock(frame, WIDTH, self.shared.side());
             self.placed = true;
         }
         if self.shared.move_to_next_display.swap(false, Ordering::SeqCst) {
-            window::dock_next_screen(frame, WIDTH);
+            window::dock_next_screen(frame, WIDTH, self.shared.side());
         }
-        window::keep_fitted(frame, WIDTH);
+        // Dragged and dropped, the panel snaps to the nearer side and stays there.
+        if let Some(side) = window::keep_docked(frame, WIDTH) {
+            self.shared.set_side(side);
+        }
         // Remember the display, whether moved from the menu or dragged there.
         let display = window::current_display(frame);
         if display.is_some() && display != self.display {
@@ -287,8 +361,13 @@ impl eframe::App for App {
             let (top, available) = (ui.cursor().top(), ui.available_height() - PADDING);
             self.header(ui, active_sessions(&states));
             if self.accounts.is_empty() {
+                let none = if self.discovered.is_empty() {
+                    "no claude code or codex accounts found"
+                } else {
+                    "every account is off the panel. tick one under accounts in the menu"
+                };
                 ui.add_space(PADDING);
-                ui.label(RichText::new("no claude code or codex accounts found").size(12.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new(none).size(12.0).color(theme::TEXT_MUTED));
             }
             let chart_height = CHART_MIN_HEIGHT + self.chart_extra.get();
             let mut charts = 0;

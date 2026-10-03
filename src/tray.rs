@@ -1,12 +1,25 @@
 //! The menu bar item: a gauge icon, the usage figures beside it, and the settings menu.
 
+use crate::accounts::Account;
+use crate::window::Side;
 use crate::{alerts, login, settings, theme, window};
 use eframe::egui::{self, Color32, ViewportCommand};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use std::sync::{Arc, Mutex, mpsc};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+
+/// What the menu asks the app to do with its accounts.
+pub enum Command {
+    Refresh,
+    /// Take the account with this key off the panel, or put it back.
+    ToggleAccount(String),
+    AddAccount,
+    /// The accounts on this Mac changed.
+    Discovered(Vec<Account>),
+}
 
 /// What the menu and the panel both read and change.
 pub struct Shared {
@@ -15,6 +28,10 @@ pub struct Shared {
     pub always_on_top: AtomicBool,
     pub menu_bar_usage: AtomicBool,
     pub move_to_next_display: AtomicBool,
+    /// Docked against the right edge of the display rather than the left.
+    pub right_side: AtomicBool,
+    /// The side changed from the menu and the panel has yet to move there.
+    pub dock_requested: AtomicBool,
 }
 
 impl Shared {
@@ -25,7 +42,18 @@ impl Shared {
             always_on_top: AtomicBool::new(!settings::flag(settings::ALWAYS_ON_TOP_OFF)),
             menu_bar_usage: AtomicBool::new(settings::flag(settings::MENU_BAR_USAGE)),
             move_to_next_display: AtomicBool::new(false),
+            right_side: AtomicBool::new(settings::flag(settings::SIDE_RIGHT)),
+            dock_requested: AtomicBool::new(false),
         }
+    }
+
+    pub fn side(&self) -> Side {
+        if self.right_side.load(Ordering::SeqCst) { Side::Right } else { Side::Left }
+    }
+
+    pub fn set_side(&self, side: Side) {
+        self.right_side.store(side == Side::Right, Ordering::SeqCst);
+        settings::set_flag(settings::SIDE_RIGHT, side == Side::Right);
     }
 
     pub fn toggle_panel(&self, ctx: &egui::Context) {
@@ -43,12 +71,17 @@ pub struct Tray {
     headline: MenuItem,
     panel: MenuItem,
     next_display: MenuItem,
+    side: MenuItem,
+    accounts: Submenu,
+    /// The submenu's account rows, and which account each one's id stands for.
+    account_items: RefCell<Vec<CheckMenuItem>>,
+    account_ids: Arc<Mutex<Vec<(MenuId, String)>>>,
     /// What the menu bar shows now, so it is redrawn only when it changes.
     shown: RefCell<Option<(Vec<Option<u8>>, Option<String>)>>,
 }
 
 impl Tray {
-    pub fn new(ctx: &egui::Context, shared: Arc<Shared>, refresh_tx: mpsc::Sender<()>) -> Option<Self> {
+    pub fn new(ctx: &egui::Context, shared: Arc<Shared>, commands: mpsc::Sender<Command>) -> Option<Self> {
         let checked = |flag: &AtomicBool| flag.load(Ordering::SeqCst);
         let headline = MenuItem::new("Usage Flow", false, None);
         let panel = MenuItem::new("Hide Panel", true, None);
@@ -57,7 +90,11 @@ impl Tray {
         let alerts = CheckMenuItem::new("Alerts at 80, 90 and 100%", true, !settings::flag(settings::ALERTS_OFF), None);
         let always_on_top = CheckMenuItem::new("Always on Top", true, checked(&shared.always_on_top), None);
         let pinned = CheckMenuItem::new("Show on All Desktops", true, checked(&shared.pinned), None);
+        let side = MenuItem::new("Move to Right Side", true, None);
         let next_display = MenuItem::new("Move to Next Display", window::screen_count() > 1, None);
+        let add_account = MenuItem::new("Add Claude Code Account…", true, None);
+        let accounts = Submenu::new("Accounts", true);
+        let _ = accounts.append_items(&[&PredefinedMenuItem::separator(), &add_account]);
         let open_at_login = CheckMenuItem::new("Open at Login", true, login::enabled(), None);
         let quit = MenuItem::new("Quit Usage Flow", true, None);
 
@@ -67,10 +104,13 @@ impl Tray {
             &panel,
             &refresh,
             &PredefinedMenuItem::separator(),
+            &accounts,
+            &PredefinedMenuItem::separator(),
             &menu_bar_usage,
             &alerts,
             &always_on_top,
             &pinned,
+            &side,
             &next_display,
             &PredefinedMenuItem::separator(),
             &open_at_login,
@@ -92,12 +132,17 @@ impl Tray {
             always_on_top.id().clone(),
             pinned.id().clone(),
             next_display.id().clone(),
+            side.id().clone(),
+            add_account.id().clone(),
             open_at_login.id().clone(),
             quit.id().clone(),
         );
         let (menu_shared, menu_ctx) = (shared, ctx.clone());
+        let account_ids: Arc<Mutex<Vec<(MenuId, String)>>> = Arc::default();
+        let menu_account_ids = account_ids.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let (panel, refresh, menu_bar_usage, alerts, always_on_top, pinned, next_display, open_at_login, quit) = &ids;
+            let (panel, refresh, menu_bar_usage, alerts, always_on_top, pinned, next_display, side, add_account, open_at_login, quit) =
+                &ids;
             let shared = &menu_shared;
             let id = &event.id;
             if id == quit {
@@ -105,7 +150,7 @@ impl Tray {
             } else if id == panel {
                 shared.toggle_panel(&menu_ctx);
             } else if id == refresh {
-                let _ = refresh_tx.send(());
+                let _ = commands.send(Command::Refresh);
             } else if id == menu_bar_usage {
                 let on = !shared.menu_bar_usage.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::MENU_BAR_USAGE, on);
@@ -120,13 +165,46 @@ impl Tray {
                 settings::set_flag(settings::PINNED, on);
             } else if id == next_display {
                 shared.move_to_next_display.store(true, Ordering::SeqCst);
+            } else if id == side {
+                shared.set_side(if shared.side() == Side::Left { Side::Right } else { Side::Left });
+                shared.dock_requested.store(true, Ordering::SeqCst);
+            } else if id == add_account {
+                let _ = commands.send(Command::AddAccount);
             } else if id == open_at_login {
                 login::set_enabled(!login::enabled());
+            } else if let Some((_, key)) = menu_account_ids.lock().unwrap().iter().find(|(item, _)| item == id) {
+                let _ = commands.send(Command::ToggleAccount(key.clone()));
             }
             menu_ctx.request_repaint();
         }));
 
-        Some(Self { icon, headline, panel, next_display, shown: RefCell::new(None) })
+        Some(Self {
+            icon,
+            headline,
+            panel,
+            next_display,
+            side,
+            accounts,
+            account_items: RefCell::default(),
+            account_ids,
+            shown: RefCell::new(None),
+        })
+    }
+
+    /// Lists every account found on this Mac in the Accounts submenu, ticked while on the panel.
+    pub fn set_accounts(&self, all: &[Account], hidden: &HashSet<String>) {
+        let mut items = self.account_items.borrow_mut();
+        for item in items.drain(..) {
+            let _ = self.accounts.remove(&item);
+        }
+        let mut ids = self.account_ids.lock().unwrap();
+        ids.clear();
+        for (at, account) in all.iter().enumerate() {
+            let item = CheckMenuItem::new(&account.label, true, !hidden.contains(account.key()), None);
+            let _ = self.accounts.insert(&item, at);
+            ids.push((item.id().clone(), account.key().to_string()));
+            items.push(item);
+        }
     }
 
     /// `levels` holds each account's fullest limit as a fraction, `None` until it has a reading.
@@ -135,6 +213,10 @@ impl Tray {
         let visible = shared.visible.load(Ordering::SeqCst);
         self.panel.set_text(if visible { "Hide Panel" } else { "Show Panel" });
         self.next_display.set_enabled(window::screen_count() > 1);
+        self.side.set_text(match shared.side() {
+            Side::Left => "Move to Right Side",
+            Side::Right => "Move to Left Side",
+        });
 
         // Whole percents, so the icon is not rebuilt for changes it cannot show.
         let steps = levels.iter().map(|l| l.map(|l| (l.clamp(0.0, 1.0) * 100.0) as u8)).collect();

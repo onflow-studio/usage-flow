@@ -14,9 +14,16 @@ fn ns_window(frame: &eframe::Frame) -> Option<Retained<NSWindow>> {
     view.window()
 }
 
-/// Full height on the left edge of the display it was last on (or its current one),
-/// between the menu bar and the Dock.
-pub fn dock_left(frame: &eframe::Frame, width: f32) {
+/// The edge of the display the panel sticks to.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// Full height on `side` of the display it was last on (or its current one), between the menu
+/// bar and the Dock.
+pub fn dock(frame: &eframe::Frame, width: f32, side: Side) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let Some(window) = ns_window(frame) else { return };
     let saved = crate::settings::display();
@@ -27,7 +34,7 @@ pub fn dock_left(frame: &eframe::Frame, width: f32) {
             .find(|s| s.localizedName().to_string() == name)
     });
     let Some(screen) = remembered.or_else(|| window.screen()) else { return };
-    dock_on(&window, &screen, width);
+    dock_on(&window, &screen, width, side);
 }
 
 pub fn current_display(frame: &eframe::Frame) -> Option<String> {
@@ -35,7 +42,7 @@ pub fn current_display(frame: &eframe::Frame) -> Option<String> {
 }
 
 /// Docks the window on the next display, wrapping around.
-pub fn dock_next_screen(frame: &eframe::Frame, width: f32) {
+pub fn dock_next_screen(frame: &eframe::Frame, width: f32, side: Side) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let Some(window) = ns_window(frame) else { return };
     let screens = NSScreen::screens(mtm);
@@ -47,21 +54,20 @@ pub fn dock_next_screen(frame: &eframe::Frame, width: f32) {
         .find(|&i| current.as_deref().is_some_and(|c| std::ptr::eq(c, &*screens.objectAtIndex(i))))
         .unwrap_or(0);
     let next = screens.objectAtIndex((index + 1) % screens.count());
-    dock_on(&window, &next, width);
+    dock_on(&window, &next, width, side);
 }
 
 pub fn screen_count() -> usize {
     MainThreadMarker::new().map_or(1, |mtm| NSScreen::screens(mtm).count())
 }
 
-fn dock_on(window: &NSWindow, screen: &NSScreen, width: f32) {
+/// Full height of `screen` between the menu bar and the Dock, against `side`.
+fn dock_on(window: &NSWindow, screen: &NSScreen, width: f32, side: Side) {
     let area = screen.visibleFrame();
-    place(window, screen, area.origin.x, width);
-}
-
-/// Full height of `screen` between the menu bar and the Dock, at horizontal position `x`.
-fn place(window: &NSWindow, screen: &NSScreen, x: f64, width: f32) {
-    let area = screen.visibleFrame();
+    let x = match side {
+        Side::Left => area.origin.x,
+        Side::Right => area.origin.x + area.size.width - width as f64,
+    };
     let rect = NSRect::new(
         NSPoint::new(x, area.origin.y),
         NSSize::new(width as f64, area.size.height),
@@ -74,23 +80,27 @@ thread_local! {
     static FITTED: std::cell::Cell<Option<(NSRect, NSRect)>> = const { std::cell::Cell::new(None) };
 }
 
-/// Re-fits the window to the display it sits on whenever either changed, e.g. after being
-/// dragged to another display. Keeps the horizontal position it was dropped at.
-pub fn keep_fitted(frame: &eframe::Frame, width: f32) {
+/// Snaps the window back to an edge of the display it sits on whenever either changed, e.g.
+/// after being dragged: full height, against whichever side it was dropped nearer to. Returns
+/// that side when it had to move the window.
+pub fn keep_docked(frame: &eframe::Frame, width: f32) -> Option<Side> {
     // Mid-drag the window still belongs to the mouse.
     if NSEvent::pressedMouseButtons() != 0 {
-        return;
+        return None;
     }
-    let Some(window) = ns_window(frame) else { return };
-    let Some(screen) = window.screen() else { return };
+    let window = ns_window(frame)?;
+    let screen = window.screen()?;
     let area = screen.visibleFrame();
-    if FITTED.get() == Some((window.frame(), area)) {
-        return;
+    let current = window.frame();
+    if FITTED.get() == Some((current, area)) {
+        return None;
     }
-    let max_x = (area.origin.x + area.size.width - width as f64).max(area.origin.x);
-    place(&window, &screen, window.frame().origin.x.clamp(area.origin.x, max_x), width);
+    let middle = current.origin.x + current.size.width / 2.0;
+    let side = if middle > area.origin.x + area.size.width / 2.0 { Side::Right } else { Side::Left };
+    dock_on(&window, &screen, width, side);
     // macOS may constrain the frame we asked for, so remember the one it settled on.
     FITTED.set(Some((window.frame(), area)));
+    Some(side)
 }
 
 /// "Pinned" = shown on every desktop (Space) and over full-screen apps.

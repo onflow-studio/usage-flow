@@ -199,3 +199,40 @@ fn label_for(claude_json: &Path, service: &str, fallback: &str) -> String {
         (None, _) => fallback.to_string(),
     }
 }
+
+/// Starts a new Claude Code login: asks for a name, then opens Terminal on `claude` with a
+/// config folder of its own. The account shows up by itself once it has signed in.
+pub fn add_claude() {
+    std::thread::spawn(|| {
+        let script = "display dialog \"Name for the new Claude Code account, e.g. work. Terminal opens to sign it in, and it shows up here once it has.\" default answer \"\" with title \"Usage Flow\" buttons {\"Cancel\", \"Open Terminal\"} default button 2";
+        let Ok(out) = Command::new("osascript").args(["-e", script]).output() else { return };
+        let answer = String::from_utf8_lossy(&out.stdout);
+        let Some((_, name)) = answer.trim().split_once("text returned:") else { return };
+        let name: String = name
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_whitespace() { '-' } else { c })
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        if name.is_empty() {
+            return;
+        }
+        let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+        let dir = home.join(format!(".claude-{name}"));
+        let launcher = crate::settings::dir().join("sign-in.command");
+        let lines = [
+            "#!/bin/zsh -li".to_string(),
+            format!("export CLAUDE_CONFIG_DIR=\"{}\"", dir.display()),
+            "echo \"Usage Flow: sign in with /login, then /exit. The account appears in the panel within a minute.\"".to_string(),
+            "exec claude".to_string(),
+        ];
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::create_dir_all(crate::settings::dir());
+        if std::fs::write(&launcher, lines.join("\n") + "\n").is_err() {
+            return;
+        }
+        let _ = Command::new("chmod").arg("+x").arg(&launcher).status();
+        let _ = Command::new("open").arg(&launcher).spawn();
+    });
+}

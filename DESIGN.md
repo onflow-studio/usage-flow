@@ -43,7 +43,7 @@ Account identity is a hue, shown as an 8px square before the name and never as t
 
 ## Fit
 
-No scrolling. The hourly charts stretch to fill spare height (24px minimum). If the accounts still overflow, the whole panel zooms out, down to 50%, until they fit. Dropped on another display, the panel takes that display's height and keeps the horizontal spot it was dropped at.
+No scrolling. The hourly charts stretch to fill spare height (24px minimum). If the accounts still overflow, the whole panel zooms out, down to 50%, until they fit. The panel always sits against the left or right edge of a display. Dropped anywhere, it takes that display's height and snaps to the nearer side.
 
 ## Components
 

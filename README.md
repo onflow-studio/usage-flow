@@ -23,13 +23,13 @@ Limits only show up when you hit them. The session window runs out in the middle
 
 ## What you get
 
-- **Every account, side by side.** Each Claude Code login on your Mac (`~/.claude` and any `~/.claude-*` config folder) plus Codex, found on their own.
+- **Every account, side by side.** Each Claude Code login on your Mac (`~/.claude` and any `~/.claude-*` config folder) plus Codex, found on their own. Take one off the panel or sign a new one in from the menu.
 - **Limits with a pace.** Session and weekly windows as bars, with a tick for how much of the window has passed and a projection: `pace: ~72% at reset`, or the time you would hit 100%.
 - **An icon that shows what's on.** One bar per account in the menu bar, filled as far as its fullest limit. It turns amber at 70% and red at 90%.
 - **What you are burning.** Tokens in the last hour and today, sessions running right now, and a 12-hour chart per account, read from local transcripts.
 - **A heads-up before the wall.** A notification at 80, 90 and 100% of a limit, and when a session or week resets.
-- **Fits where you put it.** The panel docks to the edge of a display, full height, and sizes its content to the room it has. Drag it to another display and it settles there.
-- **Settings in the menu.** Click the gauge for the panel, menu bar figures, alerts, always on top, all desktops and open at login.
+- **Sticks to a side.** The panel docks to the left or right edge of a display, full height, and sizes its content to the room it has. Drag it anywhere and it snaps to the nearer side.
+- **Settings in the menu.** Click the gauge for the panel, accounts, menu bar figures, alerts, always on top, all desktops, side and open at login.
 - **Quiet by design.** No account, no telemetry, no Dock icon. It only talks to the services you already use.
 
 ## Install
@@ -50,12 +50,15 @@ Limits only show up when you hit them. The session window runs out in the middle
 | --- | --- |
 | Click the gauge | Open the menu |
 | **Show Panel** / **Hide Panel** | Show or hide the panel |
-| Drag the panel's top row | Move it, also to another display |
+| Drag the panel's top row | Move it. It snaps to the nearer side of the display it lands on |
 | ↻ in the panel, or **Refresh Now** | Fetch limits now instead of waiting 10 minutes |
 | ✕ in the panel | Hide it. **Show Panel** brings it back |
 | **Usage in Menu Bar** | Show the figures beside the gauge (`session·week` per account). Off to start with |
 | **Alerts at 80, 90 and 100%** | Turn notifications on or off |
 | **Always on Top** / **Show on All Desktops** | Keep the panel above other windows, and on every Space |
+| **Accounts**, then an account | Take it off the panel, or put it back |
+| **Accounts**, then **Add Claude Code Account…** | Name a new login and sign it in from Terminal. It joins the panel once signed in |
+| **Move to Right Side** / **Move to Left Side** | Dock the panel against the other edge |
 | **Move to Next Display** | Dock the panel on the next display |
 | **Open at Login** / **Quit Usage Flow** | The usual |
 
