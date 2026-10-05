@@ -10,6 +10,7 @@ pub const MENU_BAR_USAGE: &str = "menu-bar-usage";
 pub const ALERTS_OFF: &str = "alerts-disabled";
 pub const SIDE_RIGHT: &str = "side-right";
 pub const KEEP_CLEAR: &str = "keep-windows-clear";
+pub const TUCKED: &str = "tucked";
 
 #[cfg(target_os = "macos")]
 const FOLDER: &str = "Usage Flow";

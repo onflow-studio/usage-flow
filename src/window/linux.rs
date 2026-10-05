@@ -112,6 +112,8 @@ static FITTED: Mutex<Option<(Rect, Rect)>> = Mutex::new(None);
 static ASKED: Mutex<Option<Rect>> = Mutex::new(None);
 /// When the window manager was last asked for something.
 static CHANGED: Mutex<Option<Instant>> = Mutex::new(None);
+/// Side of the dot the panel is shrunk to, in pixels, and 0 while it is its full size.
+static DOT: AtomicU32 = AtomicU32::new(0);
 /// The strip reserved for the panel: its frame when it was reserved, and its side.
 static RESERVED: Mutex<Option<(Rect, Side)>> = Mutex::new(None);
 
@@ -236,6 +238,26 @@ pub fn units_per_point(ctx: &egui::Context) -> f32 {
     ctx.native_pixels_per_point().unwrap_or(1.0)
 }
 
+/// Shrinks the panel to a dot in the top corner of its side, or grows it back with `None`.
+/// Returns whether that is a change, which takes docking again to show.
+pub fn set_dot(size: Option<f32>) -> bool {
+    let size = size.map_or(0, |size| size.round() as u32);
+    DOT.swap(size, Ordering::SeqCst) != size
+}
+
+/// Whether the pointer is over the panel, asked of the X server: a window that changes size
+/// under a still pointer is told it left, and one that takes the focus that it came.
+pub fn pointer_over(frame: &eframe::Frame) -> bool {
+    let over = || {
+        let x = x()?;
+        let rect = frame_of(x, window_id(frame)?)?;
+        let pointer = x.conn.query_pointer(x.root).ok()?.reply().ok()?;
+        let (left, top) = (pointer.root_x as i32, pointer.root_y as i32);
+        Some(left >= rect.x && left < rect.right() && top >= rect.y && top < rect.bottom())
+    };
+    over().unwrap_or(false)
+}
+
 /// Full height on `side` of the display it was last on (or its current one), between the
 /// desktop's own panels.
 pub fn dock(frame: &eframe::Frame, width: f32, side: Side) {
@@ -276,24 +298,27 @@ pub fn screen_count() -> usize {
     x().map_or(1, |x| monitors(x).len().max(1))
 }
 
-/// Full height of `monitor` between the desktop's own panels, against `side`.
+/// Full height of `monitor` between the desktop's own panels, against `side`. Shrunk to a dot,
+/// it sits in the top corner of that side instead, a little in from both edges.
 fn dock_on(x: &X, window: u32, monitor: Rect, width: f32, side: Side) {
     let area = area(x, monitor);
-    let width = width.round() as i32;
+    let dot = DOT.load(Ordering::SeqCst) as i32;
+    let (width, height, inset) = if dot > 0 { (dot, dot, dot / 3) } else { (width.round() as i32, area.height, 0) };
     let left = match side {
-        Side::Left => area.x,
-        Side::Right => area.right() - width,
+        Side::Left => area.x + inset,
+        Side::Right => area.right() - width - inset,
     };
+    let top = area.y + inset;
     // The window is not resizable, which the window manager holds it to: the new size is
     // declared before it is asked for. The position goes with it, so the window comes back to
     // its place after being hidden.
     let mut hints = WmSizeHints::new();
-    hints.position = Some((WmSizeHintsSpecification::UserSpecified, left, area.y));
-    hints.size = Some((WmSizeHintsSpecification::UserSpecified, width, area.height));
-    hints.min_size = Some((width, area.height));
-    hints.max_size = Some((width, area.height));
+    hints.position = Some((WmSizeHintsSpecification::UserSpecified, left, top));
+    hints.size = Some((WmSizeHintsSpecification::UserSpecified, width, height));
+    hints.min_size = Some((width, height));
+    hints.max_size = Some((width, height));
     let _ = hints.set_normal_hints(&x.conn, window);
-    let place = ConfigureWindowAux::new().x(left).y(area.y).width(width as u32).height(area.height as u32);
+    let place = ConfigureWindowAux::new().x(left).y(top).width(width as u32).height(height as u32);
     let _ = x.conn.configure_window(window, &place);
     let _ = x.conn.flush();
     *ASKED.lock().unwrap() = Some(area);

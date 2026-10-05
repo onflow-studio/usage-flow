@@ -34,6 +34,8 @@ pub struct Shared {
     pub dock_requested: AtomicBool,
     /// Asked to keep other windows out from under the panel. It takes effect once macOS allows it.
     pub keep_clear: AtomicBool,
+    /// Shrunk to a dot in the corner until the pointer is over it.
+    pub tucked: AtomicBool,
 }
 
 impl Shared {
@@ -47,6 +49,7 @@ impl Shared {
             right_side: AtomicBool::new(settings::flag(settings::SIDE_RIGHT)),
             dock_requested: AtomicBool::new(false),
             keep_clear: AtomicBool::new(settings::flag(settings::KEEP_CLEAR)),
+            tucked: AtomicBool::new(settings::flag(settings::TUCKED)),
         }
     }
 
@@ -177,6 +180,11 @@ impl Tray {
             &open_at_login,
             &quit,
         ]);
+        // The dot takes a window that can be shrunk and grown from here, so far only on Linux.
+        let tucked = CheckMenuItem::new("Shrink to a Dot Until Hovered", true, checked(&shared.tucked), None);
+        #[cfg(target_os = "linux")]
+        let _ = menu.insert(&tucked, 9);
+        let tucked = tucked.id().clone();
         let icon = TrayIconBuilder::new()
             .with_icon(gauge(&[]))
             .with_icon_as_template(false)
@@ -234,6 +242,9 @@ impl Tray {
             } else if id == always_on_top {
                 let on = !shared.always_on_top.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::ALWAYS_ON_TOP_OFF, !on);
+            } else if *id == tucked {
+                let on = !shared.tucked.fetch_xor(true, Ordering::SeqCst);
+                settings::set_flag(settings::TUCKED, on);
             } else if id == pinned {
                 let on = !shared.pinned.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::PINNED, on);

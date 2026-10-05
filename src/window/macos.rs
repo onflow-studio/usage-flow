@@ -20,6 +20,15 @@ pub fn units_per_point(_ctx: &eframe::egui::Context) -> f32 {
     1.0
 }
 
+/// The panel only shrinks to a dot on Linux so far.
+pub fn set_dot(_size: Option<f32>) -> bool {
+    false
+}
+
+pub fn pointer_over(_frame: &eframe::Frame) -> bool {
+    false
+}
+
 /// Full height on `side` of the display it was last on (or its current one), between the menu
 /// bar and the Dock.
 pub fn dock(frame: &eframe::Frame, width: f32, side: Side) {

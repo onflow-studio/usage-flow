@@ -63,6 +63,7 @@ Open **Usage Flow** from your apps. It works as on macOS, with these differences
 - **The gauge is a tray icon.** GNOME shows it through the AppIndicator extension, which Ubuntu ships turned on.
 - **Logins come from a file.** Claude Code on Linux keeps each login in `.credentials.json` inside its config folder, and that is where Usage Flow reads it.
 - **Keep Windows Clear of the Panel asks for nothing.** The panel reserves its strip with the window manager, as a dock does, so maximized and tiled windows stop at its edge. While it is on, the panel shows on every workspace and is moved from the menu rather than dragged. A panel with another display beyond its edge has no strip to reserve.
+- **Shrink to a Dot Until Hovered** tucks the panel into a small ring in the top corner of its side, filled as far as your fullest limit. Put the pointer on it and the panel opens over your windows; move away and it shrinks back.
 - **Settings live in `~/.local/share/usage-flow/`**, and **Open at Login** is an entry in `~/.config/autostart/`.
 
 Tested on Ubuntu 24.04 with GNOME on X11. Under Wayland it runs through XWayland, which has not been tried yet.
