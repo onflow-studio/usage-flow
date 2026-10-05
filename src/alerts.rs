@@ -61,6 +61,16 @@ fn notify(title: &str, body: &str) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
+    send(title, body);
+}
+
+#[cfg(target_os = "linux")]
+fn send(title: &str, body: &str) {
+    let _ = Command::new("notify-send").args(["--app-name", "Usage Flow", "--icon", "usage-flow", title, body]).spawn();
+}
+
+#[cfg(target_os = "macos")]
+fn send(title: &str, body: &str) {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!(
         "display notification \"{}\" with title \"Usage Flow\" subtitle \"{}\"",
