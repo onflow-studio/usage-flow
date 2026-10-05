@@ -19,7 +19,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, Vie
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
-use tray::{Command, Shared, Tray};
+use tray::{Command, Handle as Tray, Shared};
 use window::Side;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -37,6 +37,10 @@ const BAND_HEIGHT: f32 = 28.0;
 const MIN_ZOOM: f32 = 0.5;
 /// Widest a plan badge gets before its text is cut.
 const PLAN_MAX_WIDTH: f32 = 96.0;
+/// Side of the dot the panel shrinks to while tucked away.
+const DOT: f32 = 28.0;
+/// How long the panel stays open after the pointer leaves it.
+const LINGER: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
 struct AccountState {
@@ -64,6 +68,8 @@ struct App {
     applied_pin: Option<bool>,
     applied_always_on_top: Option<bool>,
     placed: bool,
+    /// When the pointer was last over the panel.
+    hovered: Option<std::time::Instant>,
     display: Option<String>,
     /// Height added to every hourly chart so the content fills the window.
     chart_extra: std::cell::Cell<f32>,
@@ -95,6 +101,7 @@ impl App {
             applied_pin: None,
             applied_always_on_top: None,
             placed: false,
+            hovered: None,
             display: None,
             chart_extra: std::cell::Cell::new(0.0),
         };
@@ -221,7 +228,7 @@ fn spawn_poller(accounts: Vec<Account>, states: States, ctx: egui::Context, refr
                 let Kind::Claude { keychain_service } = &account.kind else { continue };
                 states.lock().unwrap()[i].checking = true;
                 ctx.request_repaint();
-                let result = poll(keychain_service);
+                let result = poll(keychain_service, &account.config_dir);
                 let mut states = states.lock().unwrap();
                 let state = &mut states[i];
                 match result {
@@ -298,9 +305,9 @@ fn spawn_scanner(accounts: Vec<Account>, states: States, ctx: egui::Context, ret
 }
 
 /// Reads the token fresh each time so we pick up refreshes done by Claude Code itself.
-fn poll(keychain_service: &str) -> Result<Vec<Limit>, String> {
-    let token = accounts::read_token(keychain_service)
-        .ok_or("no credentials in Keychain")?;
+fn poll(keychain_service: &str, config_dir: &std::path::Path) -> Result<Vec<Limit>, String> {
+    let token = accounts::read_token(keychain_service, config_dir)
+        .ok_or(if cfg!(target_os = "macos") { "no credentials in Keychain" } else { "no credentials found" })?;
     if token
         .expires_at_ms
         .is_some_and(|exp| exp <= Utc::now().timestamp_millis())
@@ -319,15 +326,30 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_secs(1));
         self.handle_commands(ctx);
 
+        let width = WIDTH * window::units_per_point(ctx);
+        // Tucked away, the panel is a dot in the corner that opens while the pointer is over it.
+        let tucked = self.shared.tucked.load(Ordering::SeqCst);
+        if tucked && window::pointer_over(frame) {
+            self.hovered = Some(std::time::Instant::now());
+        }
+        let lingering = self.hovered.is_some_and(|at| at.elapsed() < LINGER);
+        if tucked && lingering {
+            ctx.request_repaint_after(LINGER);
+        }
+        if window::set_dot((tucked && !lingering).then_some(DOT * window::units_per_point(ctx))) {
+            self.shared.dock_requested.store(true, Ordering::SeqCst);
+        }
         if !self.placed || self.shared.dock_requested.swap(false, Ordering::SeqCst) {
-            window::dock(frame, WIDTH, self.shared.side());
+            window::dock(frame, width, self.shared.side());
             self.placed = true;
+            // A window manager may drop the level of a window while it is hidden.
+            self.applied_always_on_top = None;
         }
         if self.shared.move_to_next_display.swap(false, Ordering::SeqCst) {
-            window::dock_next_screen(frame, WIDTH, self.shared.side());
+            window::dock_next_screen(frame, width, self.shared.side());
         }
         // Dragged and dropped, the panel snaps to the nearer side and stays there.
-        if let Some(side) = window::keep_docked(frame, WIDTH) {
+        if let Some(side) = window::keep_docked(frame, width) {
             self.shared.set_side(side);
         }
         // Remember the display, whether moved from the menu or dragged there.
@@ -350,7 +372,8 @@ impl eframe::App for App {
             self.applied_always_on_top = Some(always_on_top);
         }
 
-        let keep_clear = self.shared.keep_clear.load(Ordering::SeqCst) && self.shared.visible.load(Ordering::SeqCst);
+        let keep_clear =
+            self.shared.keep_clear.load(Ordering::SeqCst) && self.shared.visible.load(Ordering::SeqCst) && !tucked;
         clear::set_panel(keep_clear.then(|| window::screen_rect(frame)).flatten().map(|rect| (rect, self.shared.side())));
 
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -360,6 +383,11 @@ impl eframe::App for App {
 
         let states = self.states.lock().unwrap();
         self.update_tray(&states);
+        // The window itself says which of the two it is, as it changes size a moment after asked.
+        if ctx.content_rect().width() < WIDTH / 2.0 {
+            draw_dot(ctx, &states);
+            return;
+        }
 
         let panel = egui::Frame::new()
             .fill(theme::STATUS)
@@ -392,6 +420,30 @@ impl eframe::App for App {
             theme::edge(&ui.painter().with_clip_rect(screen), screen, self.shared.side() == Side::Left);
         });
     }
+}
+
+/// The panel shrunk to a dot: a ring filled as far as the fullest limit of any account.
+fn draw_dot(ctx: &egui::Context, states: &[AccountState]) {
+    let fullest = states.iter().flat_map(|s| &s.limits).map(|l| l.percent).reduce(f32::max);
+    egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
+        let rect = ui.max_rect();
+        let (center, radius) = (rect.center(), rect.width().min(rect.height()) / 2.0 - 1.0);
+        let painter = ui.painter();
+        painter.circle_filled(center, radius, theme::STATUS);
+        painter.circle_stroke(center, radius, Stroke::new(1.0_f32, theme::BORDER));
+        let (ring, thickness) = (radius * 0.58, radius * 0.24);
+        painter.circle_stroke(center, ring, Stroke::new(thickness, theme::SURFACE_RAISED));
+        let Some(percent) = fullest else { return };
+        let turn = (percent / 100.0).clamp(0.02, 1.0);
+        let arc: Vec<Pos2> = (0..=48)
+            .map(|i| {
+                let angle = turn * std::f32::consts::TAU * i as f32 / 48.0;
+                center + Vec2::new(angle.sin(), -angle.cos()) * ring
+            })
+            .collect();
+        let color = tray::level_color(percent).unwrap_or(theme::ACCENT);
+        painter.add(egui::Shape::line(arc, Stroke::new(thickness, color)));
+    });
 }
 
 /// A hairline across the whole panel, edge to edge.
@@ -436,7 +488,8 @@ impl App {
     fn header(&self, ui: &mut egui::Ui, active: usize) {
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click_and_drag());
-        if response.drag_started() {
+        // The dot has its corner, so a tucked panel is moved from the menu.
+        if response.drag_started() && !self.shared.tucked.load(Ordering::SeqCst) {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
         }
         let mut row = ui.new_child(
@@ -655,7 +708,7 @@ fn stat(ui: &mut egui::Ui, label: &str, value: &str, hover: &str) {
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.label(small(label, theme::TEXT_DIM));
     ui.label(RichText::new(value).font(theme::semibold(15.0)).color(theme::TEXT))
-        .on_hover_text(format!("{hover}, cache reads included. from local transcripts on this mac"));
+        .on_hover_text(format!("{hover}, cache reads included. from local transcripts on this computer"));
 }
 
 fn draw_limit(ui: &mut egui::Ui, limit: &Limit) {
@@ -810,8 +863,6 @@ fn window_level(on_top: bool) -> egui::WindowLevel {
 }
 
 fn main() -> eframe::Result {
-    use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
-
     settings::migrate();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -822,7 +873,9 @@ fn main() -> eframe::Result {
             .with_resizable(false)
             .with_window_level(window_level(!settings::flag(settings::ALWAYS_ON_TOP_OFF))),
         // Menu bar app: no Dock icon, no Cmd-Tab entry.
+        #[cfg(target_os = "macos")]
         event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
             builder.with_activation_policy(ActivationPolicy::Accessory);
         })),
         ..Default::default()

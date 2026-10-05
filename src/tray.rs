@@ -34,6 +34,8 @@ pub struct Shared {
     pub dock_requested: AtomicBool,
     /// Asked to keep other windows out from under the panel. It takes effect once macOS allows it.
     pub keep_clear: AtomicBool,
+    /// Shrunk to a dot in the corner until the pointer is over it.
+    pub tucked: AtomicBool,
 }
 
 impl Shared {
@@ -47,6 +49,7 @@ impl Shared {
             right_side: AtomicBool::new(settings::flag(settings::SIDE_RIGHT)),
             dock_requested: AtomicBool::new(false),
             keep_clear: AtomicBool::new(settings::flag(settings::KEEP_CLEAR)),
+            tucked: AtomicBool::new(settings::flag(settings::TUCKED)),
         }
     }
 
@@ -63,9 +66,64 @@ impl Shared {
         let show = !self.visible.fetch_xor(true, Ordering::SeqCst);
         ctx.send_viewport_cmd(ViewportCommand::Visible(show));
         if show {
+            // A window manager may put a window that comes back wherever it sees fit.
+            self.dock_requested.store(true, Ordering::SeqCst);
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
         ctx.request_repaint();
+    }
+}
+
+/// The menu bar item as the panel holds it.
+#[cfg(not(target_os = "linux"))]
+pub type Handle = Tray;
+
+/// The menu bar item as the panel holds it. On Linux a tray icon lives on a GTK main loop, which
+/// winit does not run, so the item is built on a thread of its own and told from here what to show.
+#[cfg(target_os = "linux")]
+pub struct Handle(mpsc::Sender<Message>);
+
+#[cfg(target_os = "linux")]
+enum Message {
+    Accounts(Vec<Account>, HashSet<String>),
+    Update(Vec<Option<f32>>, String, String),
+}
+
+#[cfg(target_os = "linux")]
+impl Handle {
+    pub fn new(ctx: &egui::Context, shared: Arc<Shared>, commands: mpsc::Sender<Command>) -> Option<Self> {
+        let (messages, inbox) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            if gtk::init().is_err() {
+                return;
+            }
+            let Some(tray) = Tray::new(&ctx, shared.clone(), commands) else { return };
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                // Only the newest reading is worth drawing.
+                let mut update = None;
+                for message in inbox.try_iter() {
+                    match message {
+                        Message::Accounts(all, hidden) => tray.set_accounts(&all, &hidden),
+                        Message::Update(levels, usage, headline) => update = Some((levels, usage, headline)),
+                    }
+                }
+                if let Some((levels, usage, headline)) = update {
+                    tray.update(&shared, &levels, usage, &headline);
+                }
+                gtk::glib::ControlFlow::Continue
+            });
+            gtk::main();
+        });
+        Some(Self(messages))
+    }
+
+    pub fn set_accounts(&self, all: &[Account], hidden: &HashSet<String>) {
+        let _ = self.0.send(Message::Accounts(all.to_vec(), hidden.clone()));
+    }
+
+    pub fn update(&self, _shared: &Shared, levels: &[Option<f32>], usage: String, headline: &str) {
+        let _ = self.0.send(Message::Update(levels.to_vec(), usage, headline.to_string()));
     }
 }
 
@@ -122,6 +180,11 @@ impl Tray {
             &open_at_login,
             &quit,
         ]);
+        // The dot takes a window that can be shrunk and grown from here, so far only on Linux.
+        let tucked = CheckMenuItem::new("Shrink to a Dot Until Hovered", true, checked(&shared.tucked), None);
+        #[cfg(target_os = "linux")]
+        let _ = menu.insert(&tucked, 9);
+        let tucked = tucked.id().clone();
         let icon = TrayIconBuilder::new()
             .with_icon(gauge(&[]))
             .with_icon_as_template(false)
@@ -179,6 +242,9 @@ impl Tray {
             } else if id == always_on_top {
                 let on = !shared.always_on_top.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::ALWAYS_ON_TOP_OFF, !on);
+            } else if *id == tucked {
+                let on = !shared.tucked.fetch_xor(true, Ordering::SeqCst);
+                settings::set_flag(settings::TUCKED, on);
             } else if id == pinned {
                 let on = !shared.pinned.fetch_xor(true, Ordering::SeqCst);
                 settings::set_flag(settings::PINNED, on);

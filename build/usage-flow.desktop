@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Usage Flow
+Comment=Claude Code and Codex limits at a glance
+Exec=usage-flow
+Icon=usage-flow
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=usage-flow

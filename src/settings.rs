@@ -10,13 +10,33 @@ pub const MENU_BAR_USAGE: &str = "menu-bar-usage";
 pub const ALERTS_OFF: &str = "alerts-disabled";
 pub const SIDE_RIGHT: &str = "side-right";
 pub const KEEP_CLEAR: &str = "keep-windows-clear";
+pub const TUCKED: &str = "tucked";
 
+#[cfg(target_os = "macos")]
+const FOLDER: &str = "Usage Flow";
+#[cfg(not(target_os = "macos"))]
+const FOLDER: &str = "usage-flow";
+
+pub fn home() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+}
+
+#[cfg(target_os = "macos")]
 fn app_support() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("Library/Application Support")
+    home().join("Library/Application Support")
+}
+
+/// `$XDG_DATA_HOME`, which is `~/.local/share` unless set.
+#[cfg(not(target_os = "macos"))]
+fn app_support() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home().join(".local/share"))
 }
 
 pub fn dir() -> PathBuf {
-    app_support().join("Usage Flow")
+    app_support().join(FOLDER)
 }
 
 /// The app was called claude-usage, and its data folder carries the name: bring settings and the
