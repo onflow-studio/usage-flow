@@ -19,7 +19,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2, Vie
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
-use tray::{Command, Shared, Tray};
+use tray::{Command, Handle as Tray, Shared};
 use window::Side;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -221,7 +221,7 @@ fn spawn_poller(accounts: Vec<Account>, states: States, ctx: egui::Context, refr
                 let Kind::Claude { keychain_service } = &account.kind else { continue };
                 states.lock().unwrap()[i].checking = true;
                 ctx.request_repaint();
-                let result = poll(keychain_service);
+                let result = poll(keychain_service, &account.config_dir);
                 let mut states = states.lock().unwrap();
                 let state = &mut states[i];
                 match result {
@@ -298,9 +298,9 @@ fn spawn_scanner(accounts: Vec<Account>, states: States, ctx: egui::Context, ret
 }
 
 /// Reads the token fresh each time so we pick up refreshes done by Claude Code itself.
-fn poll(keychain_service: &str) -> Result<Vec<Limit>, String> {
-    let token = accounts::read_token(keychain_service)
-        .ok_or("no credentials in Keychain")?;
+fn poll(keychain_service: &str, config_dir: &std::path::Path) -> Result<Vec<Limit>, String> {
+    let token = accounts::read_token(keychain_service, config_dir)
+        .ok_or(if cfg!(target_os = "macos") { "no credentials in Keychain" } else { "no credentials found" })?;
     if token
         .expires_at_ms
         .is_some_and(|exp| exp <= Utc::now().timestamp_millis())
@@ -319,15 +319,18 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_secs(1));
         self.handle_commands(ctx);
 
+        let width = WIDTH * window::units_per_point(ctx);
         if !self.placed || self.shared.dock_requested.swap(false, Ordering::SeqCst) {
-            window::dock(frame, WIDTH, self.shared.side());
+            window::dock(frame, width, self.shared.side());
             self.placed = true;
+            // A window manager may drop the level of a window while it is hidden.
+            self.applied_always_on_top = None;
         }
         if self.shared.move_to_next_display.swap(false, Ordering::SeqCst) {
-            window::dock_next_screen(frame, WIDTH, self.shared.side());
+            window::dock_next_screen(frame, width, self.shared.side());
         }
         // Dragged and dropped, the panel snaps to the nearer side and stays there.
-        if let Some(side) = window::keep_docked(frame, WIDTH) {
+        if let Some(side) = window::keep_docked(frame, width) {
             self.shared.set_side(side);
         }
         // Remember the display, whether moved from the menu or dragged there.
@@ -655,7 +658,7 @@ fn stat(ui: &mut egui::Ui, label: &str, value: &str, hover: &str) {
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.label(small(label, theme::TEXT_DIM));
     ui.label(RichText::new(value).font(theme::semibold(15.0)).color(theme::TEXT))
-        .on_hover_text(format!("{hover}, cache reads included. from local transcripts on this mac"));
+        .on_hover_text(format!("{hover}, cache reads included. from local transcripts on this computer"));
 }
 
 fn draw_limit(ui: &mut egui::Ui, limit: &Limit) {
@@ -810,8 +813,6 @@ fn window_level(on_top: bool) -> egui::WindowLevel {
 }
 
 fn main() -> eframe::Result {
-    use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
-
     settings::migrate();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -822,7 +823,9 @@ fn main() -> eframe::Result {
             .with_resizable(false)
             .with_window_level(window_level(!settings::flag(settings::ALWAYS_ON_TOP_OFF))),
         // Menu bar app: no Dock icon, no Cmd-Tab entry.
+        #[cfg(target_os = "macos")]
         event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
             builder.with_activation_policy(ActivationPolicy::Accessory);
         })),
         ..Default::default()

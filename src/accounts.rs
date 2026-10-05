@@ -16,7 +16,8 @@ pub struct Account {
 
 #[derive(Clone, Debug)]
 pub enum Kind {
-    /// Limits come from Anthropic's usage endpoint with the CLI's Keychain login.
+    /// Limits come from Anthropic's usage endpoint with the CLI's own login. The Keychain
+    /// service it is kept under on macOS names the account everywhere.
     Claude { keychain_service: String },
     /// Limits come from the snapshots Codex writes into its own session logs.
     Codex,
@@ -56,15 +57,16 @@ pub struct Token {
     pub expires_at_ms: Option<i64>,
 }
 
-/// `~/.claude` plus every `~/.claude-*` directory that has credentials in the Keychain.
-/// Claude Code stores credentials for a custom `CLAUDE_CONFIG_DIR` under a service name
-/// suffixed with the first 8 hex chars of sha256(config dir).
+/// `~/.claude` plus every `~/.claude-*` directory that has credentials. On macOS Claude Code
+/// keeps them in the Keychain, those of a custom `CLAUDE_CONFIG_DIR` under a service name
+/// suffixed with the first 8 hex chars of sha256(config dir). On Linux they are a file in the
+/// config directory.
 pub fn discover() -> Vec<Account> {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let home = crate::settings::home();
     let mut accounts = Vec::new();
 
-    if keychain_read(KEYCHAIN_SERVICE).is_some() {
-        let label = label_for(&home.join(".claude.json"), KEYCHAIN_SERVICE, "default");
+    if credentials(KEYCHAIN_SERVICE, &home.join(".claude")).is_some() {
+        let label = label_for(&home.join(".claude.json"), KEYCHAIN_SERVICE, &home.join(".claude"), "default");
         accounts.push(Account {
             tag: tag_for(&label),
             label,
@@ -89,7 +91,7 @@ pub fn discover() -> Vec<Account> {
 
     for dir in dirs {
         let service = format!("{KEYCHAIN_SERVICE}-{}", dir_hash(&dir));
-        if keychain_read(&service).is_none() {
+        if credentials(&service, &dir).is_none() {
             continue;
         }
         let fallback = dir
@@ -98,7 +100,7 @@ pub fn discover() -> Vec<Account> {
             .unwrap_or_default()
             .trim_start_matches(".claude-")
             .to_string();
-        let label = label_for(&dir.join(".claude.json"), &service, &fallback);
+        let label = label_for(&dir.join(".claude.json"), &service, &dir, &fallback);
         accounts.push(Account {
             tag: tag_for(&label),
             label,
@@ -140,8 +142,8 @@ fn codex(home: &Path) -> Option<Account> {
     })
 }
 
-pub fn read_token(service: &str) -> Option<Token> {
-    let creds: Credentials = serde_json::from_str(&keychain_read(service)?).ok()?;
+pub fn read_token(service: &str, config_dir: &Path) -> Option<Token> {
+    let creds: Credentials = serde_json::from_str(&credentials(service, config_dir)?).ok()?;
     Some(Token {
         access_token: creds.oauth.access_token,
         expires_at_ms: creds.oauth.expires_at,
@@ -153,7 +155,9 @@ fn dir_hash(dir: &Path) -> String {
     digest.iter().take(4).map(|b| format!("{b:02x}")).collect()
 }
 
-fn keychain_read(service: &str) -> Option<String> {
+/// The login Claude Code keeps for an account, as JSON.
+#[cfg(target_os = "macos")]
+fn credentials(service: &str, _config_dir: &Path) -> Option<String> {
     let out = Command::new("security")
         .args(["find-generic-password", "-s", service, "-w"])
         .output()
@@ -161,6 +165,12 @@ fn keychain_read(service: &str) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The login Claude Code keeps for an account, as JSON.
+#[cfg(target_os = "linux")]
+fn credentials(_service: &str, config_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(config_dir.join(".credentials.json")).ok()
 }
 
 /// "max" + "default_claude_max_20x" -> "max 20x".
@@ -185,12 +195,12 @@ fn tag_for(label: &str) -> String {
         .unwrap_or_else(|| "?".into())
 }
 
-fn label_for(claude_json: &Path, service: &str, fallback: &str) -> String {
+fn label_for(claude_json: &Path, service: &str, config_dir: &Path, fallback: &str) -> String {
     let email = std::fs::read_to_string(claude_json)
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v["oauthAccount"]["emailAddress"].as_str().map(String::from));
-    let plan = keychain_read(service)
+    let plan = credentials(service, config_dir)
         .and_then(|s| serde_json::from_str::<Credentials>(&s).ok())
         .and_then(|c| plan_name(c.oauth.subscription_type, c.oauth.rate_limit_tier));
     match (email, plan) {
@@ -200,15 +210,12 @@ fn label_for(claude_json: &Path, service: &str, fallback: &str) -> String {
     }
 }
 
-/// Starts a new Claude Code login: asks for a name, then opens Terminal on `claude` with a
+/// Starts a new Claude Code login: asks for a name, then opens a terminal on `claude` with a
 /// config folder of its own. The account shows up by itself once it has signed in.
 pub fn add_claude() {
     std::thread::spawn(|| {
-        let script = "display dialog \"Name for the new Claude Code account, e.g. work. Terminal opens to sign it in, and it shows up here once it has.\" default answer \"\" with title \"Usage Flow\" buttons {\"Cancel\", \"Open Terminal\"} default button 2";
-        let Ok(out) = Command::new("osascript").args(["-e", script]).output() else { return };
-        let answer = String::from_utf8_lossy(&out.stdout);
-        let Some((_, name)) = answer.trim().split_once("text returned:") else { return };
-        let name: String = name
+        let Some(answer) = ask_name() else { return };
+        let name: String = answer
             .trim()
             .to_lowercase()
             .chars()
@@ -218,14 +225,13 @@ pub fn add_claude() {
         if name.is_empty() {
             return;
         }
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-        let dir = home.join(format!(".claude-{name}"));
-        let launcher = crate::settings::dir().join("sign-in.command");
+        let dir = crate::settings::home().join(format!(".claude-{name}"));
+        let launcher = crate::settings::dir().join(LAUNCHER);
         let lines = [
-            "#!/bin/zsh -li".to_string(),
+            SHEBANG.to_string(),
             format!("export CLAUDE_CONFIG_DIR=\"{}\"", dir.display()),
             "echo \"Usage Flow: sign in with /login, then /exit. The account appears in the panel within a minute.\"".to_string(),
-            "exec claude".to_string(),
+            RUN_CLAUDE.to_string(),
         ];
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::create_dir_all(crate::settings::dir());
@@ -233,6 +239,59 @@ pub fn add_claude() {
             return;
         }
         let _ = Command::new("chmod").arg("+x").arg(&launcher).status();
-        let _ = Command::new("open").arg(&launcher).spawn();
+        open_terminal(&launcher);
     });
+}
+
+const ASK_NAME: &str = "Name for the new Claude Code account, e.g. work. Terminal opens to sign it in, and it shows up here once it has.";
+
+#[cfg(target_os = "macos")]
+const LAUNCHER: &str = "sign-in.command";
+#[cfg(target_os = "macos")]
+const SHEBANG: &str = "#!/bin/zsh -li";
+#[cfg(target_os = "macos")]
+const RUN_CLAUDE: &str = "exec claude";
+
+#[cfg(target_os = "macos")]
+fn ask_name() -> Option<String> {
+    let script = format!(
+        "display dialog \"{ASK_NAME}\" default answer \"\" with title \"Usage Flow\" buttons {{\"Cancel\", \"Open Terminal\"}} default button 2"
+    );
+    let out = Command::new("osascript").args(["-e", &script]).output().ok()?;
+    let answer = String::from_utf8_lossy(&out.stdout);
+    let (_, name) = answer.trim().split_once("text returned:")?;
+    Some(name.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn open_terminal(launcher: &Path) {
+    let _ = Command::new("open").arg(launcher).spawn();
+}
+
+#[cfg(target_os = "linux")]
+const LAUNCHER: &str = "sign-in.sh";
+#[cfg(target_os = "linux")]
+const SHEBANG: &str = "#!/bin/sh";
+/// Through the login shell, as that is where `claude` is on the path.
+#[cfg(target_os = "linux")]
+const RUN_CLAUDE: &str = "exec \"${SHELL:-/bin/sh}\" -lic \"exec claude\"";
+
+#[cfg(target_os = "linux")]
+fn ask_name() -> Option<String> {
+    let zenity = ["--entry", "--title", "Usage Flow", "--ok-label", "Open Terminal", "--width", "420", "--text", ASK_NAME];
+    let kdialog = ["--title", "Usage Flow", "--inputbox", ASK_NAME];
+    let asked = Command::new("zenity").args(zenity).output().or_else(|_| Command::new("kdialog").args(kdialog).output());
+    let out = asked.ok().filter(|out| out.status.success())?;
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The desktop's own terminal where it names one, then the usual ones.
+#[cfg(target_os = "linux")]
+fn open_terminal(launcher: &Path) {
+    let terminals = [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")];
+    for (terminal, run) in terminals {
+        if Command::new(terminal).arg(run).arg(launcher).spawn().is_ok() {
+            return;
+        }
+    }
 }

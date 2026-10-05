@@ -2,7 +2,7 @@
 name = "usage-flow"
 version = "0.1.3"
 edition = "2024"
-description = "Claude Code and Codex limits at a glance, in your macOS menu bar"
+description = "Claude Code and Codex limits at a glance, in your menu bar"
 license = "MIT"
 authors = ["Fer Martin"]
 repository = "https://github.com/onflow-studio/usage-flow"
@@ -10,17 +10,25 @@ publish = false
 
 [dependencies]
 base64 = "0.23.1"
-core-foundation = "0.9"
-core-graphics = "0.23"
 chrono = { version = "0.4.45", features = ["serde"] }
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow"] }
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSScreen", "NSEvent"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSArray", "NSString"] }
 raw-window-handle = "0.6"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 tray-icon = "0.25.1"
 ureq = { version = "3.4.2", features = ["json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+core-graphics = "0.23"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSScreen", "NSEvent"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSArray", "NSString"] }
 winit = { version = "0.30", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# X11 only: under Wayland the panel runs through XWayland, where it can place itself.
+eframe = { version = "0.33", default-features = false, features = ["x11"] }
+gtk = "0.18"
+x11rb = { version = "0.13", features = ["randr"] }
